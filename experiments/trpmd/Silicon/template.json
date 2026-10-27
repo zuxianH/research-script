@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "recipe_id": "silicon-110-snap",
+  "aliases": [
+    "Si(110)",
+    "silicon 110",
+    "SNAP silicon 110",
+    "slicon 110"
+  ],
+  "layout": "TRPMD/Silicon",
+  "source": "research-script/experiments/trpmd/Silicon",
+  "reference_site": "arrhenius",
+  "validation_summary": "validation/RESULTS.md",
+  "runtime_lock": "environment/requirements-runtime.lock",
+  "smoke_settings": {
+    "replicate": [
+      2,
+      2,
+      2
+    ],
+    "atoms": 32,
+    "temperature_K": 300,
+    "timestep_fs": 0.5,
+    "steps": 100,
+    "bead_counts": [
+      1,
+      5
+    ],
+    "clients_per_bead": 1,
+    "thermostat": "pile_g",
+    "pile_lambda": 0.5,
+    "centroid_tau_fs": 1000000,
+    "seed": 31415
+  },
+  "files_sha256": {
+    "README.md": "67910a2cd67de99ab67a877d7d19169d1c8463cf9d640ad148eb4b7531115850",
+    "environment/env.sh": "8ebf35ddd280e4c388f2d79869fc94888c4fa5cf0c3213480c83ee7b86d71f28",
+    "environment/requirements-runtime.lock": "4ee2e9fee091548576d138bf7a06f7d9c2b1500bb4d5f0a740ee76499b33ef38",
+    "inputs/Si_110.lmp": "1b0b5352ebc2c256ba879bc6eada77821f2fd1229ff427d1df91f2dbb31dafb6",
+    "inputs/input.xml": "c613ebf3f73beaa3cc926df48306e6adb899a7779e1808988ab674b42a69fb61",
+    "inputs/lmp_Si_ipi.in": "99f531028f119168b1cfd00f9b20f0073b90f74e95fbcee98240bc3167fe40d0",
+    "models/SNAPotential.snapcoeff": "04c04279a25fb52893be5ac2ef2ec48d2134168e38dff20234ce85a920e0123e",
+    "models/SNAPotential.snapparam": "9a619a0c1e76bf81b8ef9384f6e97ee47b61a643fab02ba16221c73381aee0da",
+    "scripts/monitor_run.sh": "dd547f4e019f371659e9e119d6510786c865ab836ed3ead7d03284b1f58ab977",
+    "scripts/organize_run.py": "8f66c9bee486558c22b275bc70ea38c4fa3d002c143029cf4838d0d9b6f3cf84",
+    "scripts/run.sh": "d857d8699ece21f2218438ba77bae32a7552eb976c65c1fcd1cacb41daf3e0f1",
+    "scripts/validate.slurm": "d38fe103fe0584f878c8bbe7692f313069c19a5c5b08605d7cfcc5a458c75df6",
+    "tests/check_smoke.py": "68ea042cc9a8cd46bf890f5feec370fb4c9075d86a4d1e206ca13596107c1428",
+    "tests/test_portable_template.py": "53f7c83c74fc49f633a8d4bb6c282a6f81ccf560c78528310265182807e5d1d2",
+    "validation/RESULTS.md": "a1d59994834f0b23975261b53b06dd474124f32a391ade9cce8a5b40a6b2ada7"
+  }
+}

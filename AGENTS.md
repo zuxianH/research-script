@@ -1,5 +1,11 @@
 # EELS research workflow
 
+For TRPMD setup, another-machine recreation, or SNAP silicon 110, start with
+`experiments/trpmd/README.md` and its `AGENTS.md`. The canonical runnable Si(110)
+SNAP template includes the small inputs/model files; use its manifest to verify
+identities. Consult the shared TRPMD layout policy and material card. Keep target
+site setup distinct from previously verified Arrhenius smoke-test evidence.
+
 Read docs/research-workflow.md and .research-workflow.json when starting or
 resuming work. Shared implementation is in the sibling research-workflow Git
 repository; policies, lessons and records are in sibling research-knowledge.

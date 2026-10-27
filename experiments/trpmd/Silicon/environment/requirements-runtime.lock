@@ -1,0 +1,5 @@
+# Arrhenius CPU smoke-test environment; Python 3.11.17.
+ipi==3.3.1
+lammps==2025.7.22.4.0
+mpich==5.0.2
+numpy==2.4.6

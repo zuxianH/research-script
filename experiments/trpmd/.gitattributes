@@ -1,0 +1,3 @@
+# Preserve the exact imported native-input bytes and their recorded hashes.
+Silicon/inputs/Si_110.lmp -whitespace
+Silicon/inputs/lmp_Si_ipi.in -whitespace

@@ -6,6 +6,8 @@ The [research workflow guide](docs/research-workflow.md) explains the shared
 Clone them as siblings of this repository, then run `./rw status`.
 Scientific BTO preparation and restart tools are in
 [experiments/bto-single-domain](experiments/bto-single-domain/README.md).
+The accepted portable **TRPMD / Si(110) SNAP** template, including native inputs
+and model files, is in [experiments/trpmd](experiments/trpmd/README.md).
 
 Tools for preparing molecular-dynamics trajectories, running a GPU TACAW
 calculation, and correcting its output.

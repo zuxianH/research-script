@@ -1,0 +1,36 @@
+<!-- Reconstructed smoke-test template; not recovered from the original LUMI run.
+     PILE_G: internal-mode damping lambda=0.5; weak centroid coupling (1 ns).
+     See https://docs.ipi-code.org/input-tags.html#thermostat -->
+<simulation verbosity='low'>
+  <total_steps>100</total_steps>
+  <prng><seed>31415</seed></prng>
+  <output prefix='simulation'>
+    <properties filename='out' stride='1'>
+      [ step, time{femtosecond}, temperature{kelvin}, potential{electronvolt}, conserved{electronvolt} ]
+    </properties>
+    <trajectory filename='pos' stride='10' format='xyz' bead='-1'>positions{angstrom}</trajectory>
+    <checkpoint filename='restart' stride='10' overwrite='True'/>
+  </output>
+  <ffsocket name='snap' mode='unix'>
+    <address> si110 </address>
+    <latency>0.001</latency>
+    <timeout>60</timeout>
+  </ffsocket>
+  <system>
+    <initialize nbeads='1'>
+      <file mode='xyz' units='angstrom' cell_units='angstrom'> init.xyz </file>
+      <velocities mode='thermal' units='kelvin'> 300 </velocities>
+    </initialize>
+    <forces><force forcefield='snap'/></forces>
+    <ensemble><temperature units='kelvin'> 300 </temperature></ensemble>
+    <motion mode='dynamics'>
+      <dynamics mode='nvt'>
+        <timestep units='femtosecond'> 0.5 </timestep>
+        <thermostat mode='pile_g'>
+          <tau units='femtosecond'> 1000000 </tau>
+          <pile_lambda>0.5</pile_lambda>
+        </thermostat>
+      </dynamics>
+    </motion>
+  </system>
+</simulation>

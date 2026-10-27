@@ -1,0 +1,36 @@
+# silicon (110) system
+# Box, units, atom style, lattice, and mass
+
+boundary p p p
+units metal
+atom_modify map yes
+read_data Si_110_1000K.lmp
+replicate        5 7 52
+
+#write_data data.lmp
+
+# Snap
+pair_style snap
+pair_coeff * * SNAPotential.snapcoeff SNAPotential.snapparam Si
+
+# Required for the KOKKOS/GPU build: NeighborKokkos shadows the base class's
+# double** xhold with its own dual view and overrides build(), so the base
+# array is allocated but never filled. fix ipi reads it via get_xhold() and
+# gets uninitialized memory, killing the run on the 2nd force call with
+# "Atoms have moved too far apart (~1e35) for minimum image". With check no,
+# Neighbor::init() sets that pointer to nullptr and fix ipi skips the block.
+# i-PI replaces all positions every call anyway, so rebuilding every step is
+# the correct behaviour here rather than a workaround.
+neigh_modify delay 0 every 1 check no
+
+#dump dump all xyz 1 tmp.xyz
+#dump_modify dump element Si
+#run 1
+
+timestep        0.05
+
+fix 1 all ipi si110 32345 unix
+
+run             20000
+
+

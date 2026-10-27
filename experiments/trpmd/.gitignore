@@ -1,0 +1,4 @@
+.venv/
+Silicon/results/*
+!Silicon/results/.gitkeep
+__pycache__/
