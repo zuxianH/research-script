@@ -14,6 +14,12 @@ research record without changing the physical operators or acceptance criteria.
 | `docs/` | Development guidance and preserved historical documentation |
 | `/home/zuxian/Documents/PhD/Yoshioka` | Original source, environment, data and results |
 
+Browse saved results through the [visual start page](benchmark_results/START_HERE.html)
+or [text index](benchmark_results/README.md). The result store has curated
+`Current_results`, `Plots`, `Validation` and `Archive` folders. Original run
+paths and evidence remain intact; older material is outside the main browsing
+view. These local links become available after connecting the research data.
+
 ## Install and develop
 
 ```bash
