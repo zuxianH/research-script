@@ -1,0 +1,10 @@
+{
+  "provenance": "Direct user reply in this task, 2026-11-02; original generation directories unavailable on this machine",
+  "electron_energy_kev": {"status": "USER_SUPPLIED", "value": 60},
+  "number_of_slices": {"status": "USER_SUPPLIED", "value": 208},
+  "intensity_normalization": {"status": "USER_SUPPLIED", "value": "integral over px, py, E equals one; exact coordinate measures and saved-array versus downstream normalization remain to be distinguished"},
+  "Kubo_correction": {"status": "USER_SUPPLIED", "value": "already applied; do not apply again"},
+  "force_model": {"status": "USER_SUPPLIED", "value": "user thinks it is the supplied Si.tersoff.mod potential", "confidence": "tentative; exact parameter file and hash not independently verified"},
+  "comparison_scope": {"status": "USER_SUPPLIED", "value": "qualitative TACAW comparison is acceptable; classical-region single-phonon agreement is useful, multiphonon accuracy requires separate justification"},
+  "TACAW_accuracy": "not assumed exact"
+}

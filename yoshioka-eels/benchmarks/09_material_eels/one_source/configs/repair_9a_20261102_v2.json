@@ -1,0 +1,10 @@
+{
+  "output": "benchmark_results/repair_20261102_v2/B9A",
+  "batch_size": 1,
+  "runtime_limit_seconds": 1800,
+  "memory_limit_gib": 2,
+  "cases": [
+    {"grid":193,"slices":1025,"thickness_repeats":2,"phonon_z":2,"temperature_k":0,"padding_angstrom":12,"elastic_background":true},
+    {"grid":257,"slices":1025,"thickness_repeats":2,"phonon_z":2,"temperature_k":0,"padding_angstrom":12,"elastic_background":true}
+  ]
+}

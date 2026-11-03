@@ -1,0 +1,46 @@
+{
+  "material_manifest": "benchmark_results/si_lattice_dynamics/manifest.json",
+  "phonon_repetitions": [
+    2,
+    2,
+    2
+  ],
+  "kinetic_energy_ev": 60000,
+  "temperature_k": 0,
+  "transverse_grids": [
+    32,
+    64,
+    128,
+    192
+  ],
+  "longitudinal_samples": [
+    256,
+    512,
+    1024,
+    2048
+  ],
+  "padding_angstrom": [
+    2,
+    4,
+    6,
+    8
+  ],
+  "selected_grid": 128,
+  "selected_longitudinal_samples": 2048,
+  "selected_padding_angstrom": 8,
+  "maximum_angle_mrad": 20,
+  "g_values": [
+    0,
+    0.25,
+    0.5,
+    1
+  ],
+  "amplitude_relative_tolerance": 0.0001,
+  "intensity_relative_tolerance": 0.01,
+  "refinement_relative_tolerance": 0.01,
+  "weak_probability_scale": 1e-18,
+  "fwhm_mev": 2,
+  "energy_step_mev": 0.05,
+  "runtime_limit_seconds": 1200,
+  "memory_limit_gib": 4
+}

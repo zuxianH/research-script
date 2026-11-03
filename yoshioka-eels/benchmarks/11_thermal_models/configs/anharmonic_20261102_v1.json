@@ -1,0 +1,22 @@
+{
+  "output": "benchmark_results/anharmonic_20261102_v1",
+  "temperatures_k": [300, 1000],
+  "supercells": [[3, 4, 4], [4, 6, 6]],
+  "seeds": [932731, 481723],
+  "timestep_fs": 1,
+  "sample_stride": 5,
+  "equilibration_steps": 5000,
+  "production_steps": 20000,
+  "thermostat_time_fs": 100,
+  "training_counts": [8, 16, 32, 64],
+  "cutoffs_angstrom": [3.6, 4, 4.5, 5],
+  "selected_cutoff_angstrom": 5,
+  "ridge_values": [0, 1e-8, 0.0001],
+  "heldout_force_relative_RMS_tolerance": 0.15,
+  "frequency_reference_absolute_tolerance_mev": 0.5,
+  "frequency_reference_uncertainty_multiplier": 2,
+  "frequency_shift_resolution": "shift must exceed conservative block-fit spread and independent MD peak uncertainty before interpretation",
+  "linewidth_resolution": "intrinsic FWHM must exceed twice Hann power-window FWHM and relative uncertainty < 0.5; otherwise NOT_RESOLVED",
+  "runtime_limit_seconds": 1200,
+  "memory_limit_gib": 2
+}

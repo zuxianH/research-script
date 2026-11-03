@@ -1,0 +1,79 @@
+{
+  "reference_supercells": [
+    [
+      3,
+      4,
+      4
+    ],
+    [
+      4,
+      5,
+      5
+    ]
+  ],
+  "displacement_angstrom": [
+    0.02,
+    0.01,
+    0.005,
+    0.0025
+  ],
+  "training_supercells": [
+    [
+      2,
+      3,
+      3
+    ],
+    [
+      3,
+      4,
+      4
+    ]
+  ],
+  "training_pair_counts": [
+    1,
+    2,
+    4,
+    8,
+    16
+  ],
+  "training_sigmas_angstrom": [
+    0.01,
+    0.003,
+    0.001
+  ],
+  "second_order_cutoffs_angstrom": [
+    3.0,
+    3.6,
+    4.0,
+    4.5,
+    5.0
+  ],
+  "regression_ridges": [
+    0.0,
+    1e-12,
+    1e-08
+  ],
+  "covariance_meshes": [
+    8,
+    12,
+    16,
+    24,
+    32,
+    48,
+    64
+  ],
+  "covariance_relative_tolerance": 0.01,
+  "force_relative_tolerance": 0.01,
+  "force_constant_relative_tolerance": 0.001,
+  "phonon_energy_tolerance_mev": 0.1,
+  "hermiticity_tolerance": 1e-10,
+  "sum_rule_tolerance": 1e-08,
+  "gamma_zero_tolerance_mev": 0.001,
+  "selected_cutoff_angstrom": 4.0,
+  "selected_sigma_angstrom": 0.001,
+  "training_seed": 120713,
+  "validation_seed": 902813,
+  "validation_structures": 8,
+  "runtime_limit_seconds": 1800,
+  "memory_limit_gib": 4
+}

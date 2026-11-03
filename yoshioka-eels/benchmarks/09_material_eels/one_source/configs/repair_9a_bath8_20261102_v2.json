@@ -1,0 +1,17 @@
+{
+  "output": "benchmark_results/repair_20261102_v2/B9A_bath",
+  "batch_size": 4,
+  "runtime_limit_seconds": 1800,
+  "memory_limit_gib": 2,
+  "cases": [
+    {
+      "grid": 65,
+      "slices": 2049,
+      "thickness_repeats": 52,
+      "phonon_z": 8,
+      "temperature_k": 0,
+      "padding_angstrom": 12,
+      "elastic_background": true
+    }
+  ]
+}

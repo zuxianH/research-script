@@ -1,0 +1,50 @@
+{
+  "material_manifest": "benchmark_results/si_lattice_dynamics/manifest.json",
+  "born_manifest": "benchmark_results/one_phonon_born/manifest.json",
+  "electron_grids": [
+    64,
+    128,
+    192
+  ],
+  "longitudinal_samples": [
+    512,
+    1024,
+    2048
+  ],
+  "padding_angstrom": [
+    4,
+    6,
+    8,
+    10
+  ],
+  "phonon_meshes": [
+    4,
+    8,
+    12,
+    16,
+    24,
+    32
+  ],
+  "selected_grid": 192,
+  "selected_samples": 2048,
+  "selected_padding_angstrom": 10,
+  "joint_grid": 256,
+  "joint_samples": 4096,
+  "joint_padding_angstrom": 12,
+  "energy_steps_mev": [
+    0.2,
+    0.1,
+    0.05,
+    0.025
+  ],
+  "fwhm_mev": 2,
+  "spectrum_L1_tolerance": 0.01,
+  "observable_relative_tolerance": 0.01,
+  "covariance_relative_tolerance": 0.01,
+  "source_amplitude_tolerance": 0.0001,
+  "weak_probability_scale": 1e-18,
+  "required_successive_comparisons": 2,
+  "runtime_limit_seconds": 1800,
+  "memory_limit_gib": 2,
+  "maximum_refinements": 30
+}

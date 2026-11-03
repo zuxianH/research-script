@@ -1,0 +1,92 @@
+{
+  "output": "benchmark_results/repair_20261102_v2/B11_checked",
+  "runtime_limit_seconds": 1200,
+  "memory_limit_gib": 2,
+  "primary_seeds": [
+    723571,
+    837213
+  ],
+  "segments_ps": [
+    20,
+    50,
+    100
+  ],
+  "default_settings": {
+    "timestep_fs": 1,
+    "sample_stride": 5,
+    "equilibration_steps": 5000,
+    "production_steps": 100000,
+    "thermostat_time_fs": 100
+  },
+  "trajectories": [
+    {
+      "temperature_k": 300,
+      "repetitions": [
+        4,
+        6,
+        6
+      ],
+      "seed": 723571
+    },
+    {
+      "temperature_k": 300,
+      "repetitions": [
+        4,
+        6,
+        6
+      ],
+      "seed": 837213
+    },
+    {
+      "temperature_k": 1000,
+      "repetitions": [
+        4,
+        6,
+        6
+      ],
+      "seed": 723571
+    },
+    {
+      "temperature_k": 1000,
+      "repetitions": [
+        4,
+        6,
+        6
+      ],
+      "seed": 837213
+    },
+    {
+      "temperature_k": 1000,
+      "repetitions": [
+        3,
+        4,
+        4
+      ],
+      "seed": 723571
+    },
+    {
+      "temperature_k": 1000,
+      "repetitions": [
+        3,
+        4,
+        4
+      ],
+      "seed": 723571,
+      "timestep_fs": 0.5,
+      "sample_stride": 10,
+      "equilibration_steps": 10000,
+      "production_steps": 200000
+    },
+    {
+      "temperature_k": 1000,
+      "repetitions": [
+        4,
+        6,
+        6
+      ],
+      "seed": 941727,
+      "thermostat_time_fs": 200
+    }
+  ],
+  "MD_repair": "explicit run0 pre yes after write_restart before continuing with run pre no"
+}

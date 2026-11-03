@@ -8,6 +8,8 @@ Scientific BTO preparation and restart tools are in
 [experiments/bto-single-domain](experiments/bto-single-domain/README.md).
 The accepted portable **TRPMD / Si(110) SNAP** template, including native inputs
 and model files, is in [experiments/trpmd](experiments/trpmd/README.md).
+The installable **Yoshioka EELS** package is in [yoshioka-eels](yoshioka-eels/README.md).
+Its original research results remain under `/home/zuxian/Documents/PhD/Yoshioka`.
 
 Tools for preparing molecular-dynamics trajectories, running a GPU TACAW
 calculation, and correcting its output.
