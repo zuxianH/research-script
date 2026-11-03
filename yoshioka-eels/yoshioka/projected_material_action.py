@@ -57,6 +57,9 @@ def phase_blocks(basis, xi, dimension=32, quadrature_order=None):
     output=np.ones((len(xi),len(basis),len(basis)),complex)
     for mode in range(basis.shape[1]):
         blocks=np.einsum('ik,qk,jk->qij',left,np.exp(-1j*xi[:,mode,None]*nodes),left,optimize=True)
+        # Real oscillator wavefunctions make each phase block complex symmetric.
+        # Enforce that algebraic construction identity before forming a field.
+        blocks=(blocks+blocks.swapaxes(-1,-2))/2
         states=basis[:,mode]
         output*=blocks[:,states[:,None],states[None,:]]
     return output
@@ -94,7 +97,7 @@ class ProjectedMaterialAction:
         potential=LobatoSilicon.from_abtem_table()
         kz=2*np.pi*np.fft.fftfreq(field_points,self.length/field_points)
         frequencies=np.rint(np.fft.fftfreq(field_points)*field_points).astype(int)
-        contract=dict(version=1,n=n,steps=steps,field_points=field_points,padding_m=padding_m,
+        contract=dict(version=2,n=n,steps=steps,field_points=field_points,padding_m=padding_m,
                       cell=cell.tolist(),positions=positions.tolist(),covariance=self.inactive_covariance.tolist(),
                       lobato_sha256=sha256(potential.source_path))
         self.field_digest=fingerprint(contract)
@@ -111,9 +114,16 @@ class ProjectedMaterialAction:
                 temporary=file.with_suffix('.tmp.npy')
                 profile=np.lib.format.open_memmap(temporary,mode='w+',dtype=complex,shape=(steps,len(self.Q)))
                 cov=self.inactive_covariance[atom]
-                for lo in range(0,len(self.Q),128):
+                negative=(-np.arange(self.pad))%self.pad
+                opposite=(negative[:,None]*self.pad+negative[None,:]).ravel()
+                canonical=np.flatnonzero(np.arange(len(self.Q))<=opposite)
+                # A real atomic potential obeys profile(-Q,z)=conj(profile(Q,z)).
+                # Evaluate one member per pair to avoid catastrophic relative
+                # roundoff between separately cancelled vacuum-tail transforms.
+                for lo in range(0,len(canonical),128):
                     if limits is not None: limits.check()
-                    Q=self.Q[lo:lo+128]
+                    indices=canonical[lo:lo+128]
+                    Q=self.Q[indices]
                     exponent=np.einsum('qa,ab,qb->q',Q,cov[:2,:2],Q)[:,None]+2*(Q@cov[:2,2])[:,None]*kz+cov[2,2]*kz*kz
                     fourier=potential.fourier_energy_j_m3(np.sum(Q*Q,axis=1)[:,None]+kz*kz)
                     fourier*=np.exp(-.5*exponent)
@@ -125,7 +135,13 @@ class ProjectedMaterialAction:
                     for f in range(field_points): folded[:,frequencies[f]%steps]+=fourier[:,f]
                     values=np.fft.ifft(folded,axis=-1)*steps
                     values*=np.exp(-1j*Q@pos[:2])[:,None]
-                    profile[:,lo:lo+len(Q)]=values.T
+                    if indices[0]==0:
+                        zero=values[0]
+                        if np.linalg.norm(zero.imag)>1e-12*np.linalg.norm(zero.real):
+                            raise ValueError('zero-transfer atomic field is not real')
+                        values[0]=zero.real
+                    profile[:,indices]=values.T
+                    profile[:,opposite[indices]]=values.conj().T
                 profile.flush();profile._mmap.madvise(mmap.MADV_DONTNEED);del profile
                 temporary.replace(file)
             if saved is not None and sha256(file)!=saved['files'][file.name]:

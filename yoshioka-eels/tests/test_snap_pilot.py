@@ -84,6 +84,13 @@ class SnapPilotTests(unittest.TestCase):
                 np.save(f,a)
                 ProjectedMaterialAction(None,2,3,17,17,d,bath=toy_bath())
 
+    def test_paired_fields_preserve_vacuum_tail_hermiticity(self):
+        with tempfile.TemporaryDirectory() as d:
+            h=ProjectedMaterialAction(None,2,3,17,65,d,bath=toy_bath())
+            for index in (0,1,8,16):
+                h.set_slice(index)
+                np.testing.assert_allclose(h.potential,h.potential.swapaxes(-1,-2).conj(),rtol=0,atol=1e-34)
+
     def test_checkpoint_exact_resume_nonvacuum_and_zero_prefix(self):
         with tempfile.TemporaryDirectory() as d:
             h=ProjectedMaterialAction(None,2,3,7,7,Path(d)/'fields',bath=toy_bath(),initial_index=1)

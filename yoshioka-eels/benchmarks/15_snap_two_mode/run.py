@@ -145,7 +145,7 @@ def propagate(out,args,limits):
     from yoshioka.free_propagation import electron_wavenumber
     from yoshioka.coupled_channels import thermal_channel_weights
     model,bath=load_bath(out)
-    name=f'p{args.p}_N{args.n}_F{args.fields}_S{args.steps}_D{args.dimension}'
+    name=f'p{args.p}_N{args.n}_F{args.fields}_S{args.steps}_D{args.dimension}'+('_'+args.case_tag if args.case_tag else '')
     folder=out/'cases'/name;folder.mkdir(exist_ok=True)
     if (folder/'exit.npz').exists(): raise FileExistsError('completed case is immutable; inspect its existing outputs')
     preflight=field_preflight(len(bath.positions_m),args.n,args.fields,args.steps,(args.p+1)*(args.p+2)//2,args.dimension)
@@ -254,6 +254,7 @@ def source_record(out):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage',choices=['equilibrium','fc','bath','propagate','checks','summarize'])
+    parser.add_argument('--case-tag',default='')
     parser.add_argument('--p',type=int,default=2)
     parser.add_argument('--n',type=int,default=33)
     parser.add_argument('--fields',type=int,default=769)
