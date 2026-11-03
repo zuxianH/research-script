@@ -30,7 +30,13 @@ class CoordinateMaterialAction:
         modes=len(self.omega)
         self.basis=channel_basis(modes,p);self.n=n;self.steps=steps;self.pad=2*n-1
         nodes_count=quadrature_order**modes
-        estimate=16*nodes_count*self.pad**2*5+16*nodes_count*len(self.basis)*2+16*steps*self.pad**2*4
+        # Profiles were previously estimated without the actual atom count.
+        # The list plus stacked array coexist; Fourier/Lobato work is separate.
+        profile_bytes=16*len(positions)*self.pad**2*steps
+        construction_bytes=16*self.pad**2*steps*12
+        estimate=(2*profile_bytes+construction_bytes+16*nodes_count*self.pad**2*5
+                  +16*nodes_count*len(self.basis)*2
+                  +32*len(positions)*nodes_count*self.pad)
         if estimate>maximum_bytes:raise MemoryError('coordinate tensor work-space preflight; use bounded channel tiles instead')
         self.estimated_work_bytes=estimate
         self.energy_j=60000*constants.elementary_charge;self.velocity=electron_speed(self.energy_j)

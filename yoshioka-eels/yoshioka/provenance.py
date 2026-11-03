@@ -9,7 +9,11 @@ import numpy as np
 
 
 def sha256(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for block in iter(lambda: stream.read(4*1024**2), b''):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def json_write(path, data):
