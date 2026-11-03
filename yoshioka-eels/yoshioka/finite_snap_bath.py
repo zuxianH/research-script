@@ -18,7 +18,7 @@ class FiniteOpticalBath:
 def finite_optical_bath(model, repetitions=(1,1,4), temperature_k=10.):
     """Project the highest Gamma optical cluster onto lab x/y; phase atom 0 > 0.
 
-    The full periodic 1x1x4 bath supplies all 45 nonrigid modes for covariance.
+    The full declared periodic bath supplies all 3*N-3 nonrigid modes for covariance.
     Active vectors have unit norm over the actual specimen, not per unit cell.
     Local inactive Gaussian averaging is applied once by the electron operator.
     """
@@ -60,6 +60,11 @@ def finite_optical_bath(model, repetitions=(1,1,4), temperature_k=10.):
     covariance=np.einsum('iam,ibm,m->iab',full['displacements_m'],full['displacements_m'],factors)
     xa=constants.hbar*active_omega/(constants.k*temperature_k) if temperature_k else np.full(2,np.inf)
     active_factors=1+2*np.exp(-xa)/(-np.expm1(-xa))
+    raw_covariance=covariance.copy()
+    shared=covariance.reshape(cells,nb,3,3).mean(axis=0)
+    covariance=np.tile(shared,(cells,1,1))
+    symmetry_error=np.linalg.norm(raw_covariance-covariance)/np.linalg.norm(covariance)
+    if symmetry_error>1e-10: raise ValueError('finite covariance violates cell translation symmetry')
     active_cov=np.einsum('iam,ibm,m->iab',displacement,displacement,active_factors)
     inactive=covariance-active_cov
     if np.min(np.linalg.eigvalsh(inactive)) < -1e-12*np.max(abs(covariance)):
@@ -73,7 +78,8 @@ def finite_optical_bath(model, repetitions=(1,1,4), temperature_k=10.):
                   finite_eigenvectors=full['eigenvectors'],finite_displacements_m=full['displacements_m'],
                   finite_thermal_factors=factors,active_thermal_factors=active_factors,
                   omitted_rigid_translations=3,temperature_k=temperature_k,repetitions=np.array(repetitions),
-                  boundary_conditions='periodic commensurate 1x1x4 nuclear bath; transverse periodic electron cell, z vacuum padded',
-                  covariance_accounting='full 45-mode local quantum covariance minus the two normalized active contributions; inactive average once',
+                  finite_local_covariance_raw_m2=raw_covariance, covariance_translation_relative=symmetry_error,
+                  boundary_conditions='periodic commensurate '+ 'x'.join(map(str,repetitions)) +' nuclear bath; transverse periodic electron cell, z vacuum padded',
+                  covariance_accounting=f'full {3*len(masses)-3}-mode local quantum covariance minus the two normalized active contributions; inactive average once',
                   two_phonon_basis_note='Individual 20/11/02 populations depend on the chosen basis within an exactly degenerate subspace; retain their sum')
     return bath,evidence

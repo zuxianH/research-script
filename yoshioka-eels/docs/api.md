@@ -48,3 +48,30 @@ Resource guards and checkpoint fingerprints are part of the numerical APIs.
 Use fresh output paths when changing a calculation's physical inputs or
 numerical settings. Unit tests use independent references and small synthetic
 systems; physical convergence remains a property of each chosen calculation.
+
+## Exact lateral translation sector
+
+`lateral_symmetry.LateralTranslationSector((rx, ry), (ny, nx))` validates a
+laterally repeated finite bath and maps its zero-Bloch electron sector to the
+full reciprocal grid. `reduce_bath(bath)` retains the supplied full-specimen
+active displacement normalization. `expand(coefficients)` inserts zeros in
+unreachable beams without scaling the reachable complex coefficients. The
+unit incident probability, physical momenta and detector probabilities are
+preserved. This reduction requires a plane wave in this sector and a fully
+translation-invariant interaction; it does not apply to arbitrary probes or
+non-Gamma active displacements. The current projected action uses a square
+reduced sector; the expanded full grid may be rectangular.
+
+`ProjectedMaterialAction(..., coalesce_profiles=True)` sums longitudinal
+profiles before storage when displacement vectors, inactive covariances, and
+transverse positions are exactly identical. This shares both stored fields
+and oscillator phase blocks. The cache contract records the actual grouping.
+Default construction retains the original atom-by-atom representation.
+
+`finite_optical_bath(model, repetitions, temperature_k)` recomputes all
+`3*N-3` finite periodic modes and the local quantum covariance for the supplied
+specimen, subtracting its two specimen-normalized active contributions once.
+Translation-equivalent local covariances are checked to relative `1e-10` and
+averaged at roundoff level. Raw covariances and the translation residual remain
+in the returned evidence. This is local inactive Gaussian averaging, not
+explicit scattering through all phonon modes.

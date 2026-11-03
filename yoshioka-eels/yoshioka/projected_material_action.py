@@ -70,14 +70,20 @@ class ProjectedMaterialAction:
 
     def __init__(self,model,p,n,steps,field_points,folder,bath=None,working_dimension=32,
                  quadrature_order=None,padding_m=1.2e-9,maximum_bytes=4*1024**3,
-                 limits=None,storage='mapped',initial_index=0):
+                 limits=None,storage='mapped',initial_index=0,coalesce_profiles=False):
         if min(n,steps,field_points)<1 or any(v%2!=1 for v in (n,steps,field_points)):
             raise ValueError('positive odd electron and depth grids required')
         self.d,self.omega,self.inactive_covariance,self.mode_labels,cell,positions,self.bath_scope=resolve_material_bath(model,2,bath)
         self.basis=channel_basis(len(self.omega),p)
         self.basis=self.basis[sorted(range(len(self.basis)),key=lambda i:(sum(self.basis[i]),*tuple(-self.basis[i])))]
         self.n=n;self.steps=steps;self.field_points=field_points;self.pad=2*n-1
-        self.preflight=field_preflight(len(positions),n,field_points,steps,len(self.basis),working_dimension,storage=storage)
+        groups={}
+        for atom,pos in enumerate(positions):
+            key=(self.d[atom].tobytes(),self.inactive_covariance[atom].tobytes(),pos[:2].tobytes()) if coalesce_profiles else atom
+            groups.setdefault(key,[]).append(atom)
+        groups=list(groups.values())
+        self.preflight=field_preflight(len(groups),n,field_points,steps,len(self.basis),working_dimension,storage=storage)
+        self.preflight.update(physical_atoms=len(positions),profile_templates=len(groups),coalesce_profiles=coalesce_profiles)
         if self.preflight['estimated_peak_rss_bytes']>maximum_bytes:
             raise MemoryError('bounded field/action construction preflight exceeds RSS budget')
         if limits is not None: limits.check(self.preflight['estimated_peak_rss_bytes'])
@@ -100,6 +106,7 @@ class ProjectedMaterialAction:
         contract=dict(version=2,n=n,steps=steps,field_points=field_points,padding_m=padding_m,
                       cell=cell.tolist(),positions=positions.tolist(),covariance=self.inactive_covariance.tolist(),
                       lobato_sha256=sha256(potential.source_path))
+        if coalesce_profiles: contract.update(version=3,profile_groups=groups)
         self.field_digest=fingerprint(contract)
         folder=Path(folder)/self.field_digest;folder.mkdir(parents=True,exist_ok=True)
         manifest=folder/'manifest.json'
@@ -107,9 +114,10 @@ class ProjectedMaterialAction:
         if manifest.exists() and json.loads(manifest.read_text())['contract']!=contract:
             raise ValueError('field cache contract mismatch')
         self.profiles=[];self.phase=[];self.scalar=np.zeros(steps)
-        for atom,pos in enumerate(positions):
+        for template,group in enumerate(groups):
+            atom=group[0];pos=positions[atom]
             if limits is not None: limits.check()
-            file=folder/f'atom_{atom:03d}.npy'
+            file=folder/f'atom_{template:03d}.npy'
             if not manifest.exists():
                 temporary=file.with_suffix('.tmp.npy')
                 profile=np.lib.format.open_memmap(temporary,mode='w+',dtype=complex,shape=(steps,len(self.Q)))
@@ -127,7 +135,8 @@ class ProjectedMaterialAction:
                     exponent=np.einsum('qa,ab,qb->q',Q,cov[:2,:2],Q)[:,None]+2*(Q@cov[:2,2])[:,None]*kz+cov[2,2]*kz*kz
                     fourier=potential.fourier_energy_j_m3(np.sum(Q*Q,axis=1)[:,None]+kz*kz)
                     fourier*=np.exp(-.5*exponent)
-                    fourier=fourier.astype(complex)*np.exp(-1j*(pos[2]+padding_m-self.dz/2)*kz)/(cell[0,0]*cell[1,1]*self.length)
+                    zphase=np.exp(-1j*(positions[group,2,None]+padding_m-self.dz/2)*kz).sum(axis=0)
+                    fourier=fourier.astype(complex)*zphase/(cell[0,0]*cell[1,1]*self.length)
                     # Exact evaluation of the declared finite Fourier field at
                     # propagation midpoints. Fold frequencies if steps < fields;
                     # no interpolation or change of the field band limit.
