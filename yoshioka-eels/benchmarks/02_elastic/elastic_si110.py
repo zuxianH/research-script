@@ -1,1 +1,0 @@
-../elastic_si110.py

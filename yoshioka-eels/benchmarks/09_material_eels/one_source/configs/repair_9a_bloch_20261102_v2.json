@@ -1,9 +1,0 @@
-{
-  "output":"benchmark_results/repair_20261102_v2/B9A_bloch",
-  "mode_block_size":3,
-  "runtime_limit_seconds":1800,
-  "memory_limit_gib":2,
-  "cases":[
-    {"grid_unit":33,"slices":1025,"thickness_repeats":2,"phonon_z":2,"temperature_k":0,"padding_angstrom":12,"elastic_background":false}
-  ]
-}

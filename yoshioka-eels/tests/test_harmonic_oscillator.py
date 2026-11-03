@@ -1,18 +1,11 @@
-"""Benchmark 3 analytical, numerical, cutoff, correlation, and plotting checks."""
+"""Analytical checks of oscillator amplitudes, cutoffs, and correlations."""
 
-import json
-from pathlib import Path
-import tempfile
 import unittest
 
 import numpy as np
 from scipy.constants import atomic_mass, elementary_charge, h, hbar
-from scipy.integrate import trapezoid
 
-from benchmarks.harmonic_response import (
-    OscillatorConfig, broaden_spectrum, retained_statistics, run_benchmark,
-)
-from benchmarks.oscillator_reference import (
+from references.oscillator_reference import (
     adaptive_cutoff, exact_correlation, omitted_inelastic_fraction,
     omitted_probability, poisson_weights, vacuum_amplitudes,
 )
@@ -132,16 +125,6 @@ class OscillatorNumericalTests(unittest.TestCase):
         self.assertIsNone(omitted_inelastic_fraction(0.1, 0))
         self.assertAlmostEqual(omitted_inelastic_fraction(0.1, 1), omitted_probability(0.1, 1) / -np.expm1(-0.1))
 
-    def test_adaptive_cutoffs_are_minimal_and_moments_converge(self):
-        for eta in (0, 0.01, 0.1, 0.5, 1, 4):
-            p = adaptive_cutoff(eta, 1e-12)
-            self.assertLess(omitted_probability(eta, p), 1e-12)
-            if p:
-                self.assertGreaterEqual(omitted_probability(eta, p - 1), 1e-12)
-            weights = np.abs(fock_scattering_matrix(np.sqrt(eta), 64)[:p+1, 0])**2
-            moments = retained_statistics(weights, eta, self.oscillator.quantum_energy_j)
-            self.assertLess(moments["mean_occupation_error_scaled"], 1e-8)
-            self.assertLess(moments["variance_error_scaled"], 1e-8)
 
     def test_energy_loss_origin_and_recoil_identity(self):
         losses = self.oscillator.energy_losses_j(6)
@@ -166,17 +149,6 @@ class OscillatorNumericalTests(unittest.TestCase):
         self.assertAlmostEqual(1 - low[0].real, omitted_probability(eta, 2), places=13)
         self.assertLess(abs(exact[-1] - 1), 1e-12)
 
-    def test_broadened_spectrum_preserves_retained_weight_and_units(self):
-        energies = self.oscillator.energy_losses_j(1)
-        weights = np.array([0.3, 0.2])  # Deliberately incomplete normalization.
-        arrays, metrics = broaden_spectrum(energies, weights, 2e-3 * elementary_charge)
-        self.assertLess(metrics["absolute_area_error"], 1e-10)
-        self.assertAlmostEqual(metrics["integrated_broadened_weight"], 0.5, places=12)
-        conversion = 1e-3 * elementary_charge
-        area_in_mev = trapezoid(arrays["total_density_per_j"] * conversion, arrays["energy_grid_j"] / conversion)
-        self.assertAlmostEqual(area_in_mev, 0.5, places=12)
-        self.assertTrue(np.any(arrays["total_density_per_j"][arrays["energy_grid_j"] < 0] > 0))
-        self.assertFalse(metrics["normalization_applied"])
 
     def test_reject_invalid_physical_and_numerical_inputs(self):
         for value in (0, -1, np.inf, np.nan):
@@ -191,56 +163,8 @@ class OscillatorNumericalTests(unittest.TestCase):
             quadrature_vacuum_amplitudes(0.1, 4, 0)
         with self.assertRaises(ValueError):
             normalized_hermite_polynomials(np.array([np.nan]), 4)
-        with self.assertRaises(ValueError):
-            OscillatorConfig(eta=-0.1)
-        with self.assertRaises(ValueError):
-            OscillatorConfig(tail_tolerance=0)
 
 
-class OscillatorBenchmarkTests(unittest.TestCase):
-    def test_output_guard_preserves_another_benchmarks_results(self):
-        with tempfile.TemporaryDirectory(prefix="yoshioka-oscillator-preserve-") as directory:
-            output = Path(directory)
-            previous_bytes = b'{"benchmark": "Benchmark 2", "status": "FAIL"}\n'
-            (output / "results.json").write_bytes(previous_bytes)
-            with self.assertRaisesRegex(ValueError, "another benchmark"):
-                run_benchmark(OscillatorConfig(), output)
-            self.assertEqual((output / "results.json").read_bytes(), previous_bytes)
-            self.assertEqual(list(output.iterdir()), [output / "results.json"])
-
-    def test_all_default_acceptance_checks_and_deliberate_cutoffs(self):
-        results = run_benchmark(OscillatorConfig())
-        self.assertEqual(results["status"], "PASS", results["checks"])
-        self.assertEqual(len(results["cases"]), 6)
-        for case in results["cases"]:
-            self.assertTrue(all(case["checks"].values()), case)
-            self.assertIsNotNone(case["first_converged_D_for_adaptive_p"])
-            self.assertIsNotNone(case["first_converged_nodes_for_all_cutoffs"])
-            if case["eta"] > 0:
-                self.assertTrue(any(row["status"] == "DELIBERATELY_UNDERCONVERGED" for row in case["physical_cutoff_study"]))
-        json.dumps(results, allow_nan=False)
-
-    def test_underresolved_final_quadrature_reports_failure(self):
-        results = run_benchmark(OscillatorConfig(sweep_etas=(4,), quadrature_orders=(8, 16)))
-        self.assertEqual(results["status"], "FAIL")
-        self.assertFalse(results["checks"]["numerical_matrix_elements"])
-        self.assertEqual(results["parameters"]["amplitude_tolerance"], 1e-10)
-
-    def test_signed_Q_outputs_and_independent_data_files(self):
-        oscillator = HarmonicOscillator.from_amu_mev(28.085, 60)
-        q = -np.sqrt(0.1) / oscillator.zero_point_displacement_m
-        config = OscillatorConfig(q_inv_angstrom=q * 1e-10, eta=0.1, sweep_etas=(0.1,), physical_cutoffs=(0, 1, 2, 4, 8), working_dimensions=(16, 32), quadrature_orders=(32, 64))
-        with tempfile.TemporaryDirectory(prefix="yoshioka-oscillator-test-") as directory:
-            output = Path(directory)
-            results = run_benchmark(config, output)
-            self.assertEqual(results["status"], "PASS")
-            selected = next(case for case in results["cases"] if case["key"] == results["selected_case"])
-            self.assertLess(selected["q_m_inv"], 0)
-            with np.load(output / selected["artifact"]) as data:
-                self.assertEqual(data["fock_amplitudes"].dtype, np.dtype(np.complex128))
-                self.assertEqual(data["line_energy_losses_j"][0], 0)
-                self.assertGreater(data["fock_amplitudes"][1].imag, 0)
-            self.assertTrue((output / "broadened_spectrum.npz").is_file())
 
 
 if __name__ == "__main__":

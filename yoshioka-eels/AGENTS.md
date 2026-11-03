@@ -1,27 +1,24 @@
-# Yoshioka EELS development
+# Yoshioka EELS package development
 
-This folder is the development source for distribution `yoshioka-eels` and
-Python namespace `yoshioka`. The original source, environment, physical inputs,
-checkpoints and completed outputs remain under
-`/home/zuxian/Documents/PhD/Yoshioka`. Do not edit those frozen sources while
-developing the package. Keep new numerical outputs under `PhD`, with explicit
-fresh run directories and dependency manifests.
+This directory is a Python package: distribution `yoshioka-eels`, import
+namespace `yoshioka`. Keep reusable Python code, package metadata, portable
+tests, documentation, and small examples here.
 
-Read `README.md` and `docs/research-status.md`. Packaging tests do not establish
-physical convergence. Preserve the original model identifiers, numerical
-criteria, failures, uncertainty, contact events, amplitude interference,
-weights and resource guards. The complete-pair bulk benchmark remains
-NOT_ACCEPTED and has no corrected complete-net production spectrum.
+Do not add benchmark runners, saved results, result-store links, research
+reports, machine-specific data-link scripts, or material input files to this
+directory. Research sources and completed outputs live separately under
+`/home/zuxian/Documents/PhD/Yoshioka`; preserve those frozen records. New
+calculations use fresh external output directories and dependency manifests.
 
-Installed solver code must not import `benchmarks`. Those modules are research
-checkout tools. Preserve relative compatibility links in `benchmarks` and the
-existing `import yoshioka` API. Local data links are ignored by Git; create them
-with `scripts/link_research_data.py`. Historical source-hashed resume commands
-use the original checkout, not modified package sources.
+Read `README.md` and `docs/api.md`. Preserve the existing import API, physical
+operators, SI conventions, coherent amplitudes, weights, contacts, numerical
+tolerances, and resource guards. Package checks do not establish physical
+convergence or supersede historical scientific decisions.
 
-Run relevant scientific regressions after solver changes. The full integration
-suite needs the saved research data and material-reference dependencies; the
-original `.venv/bin/python` may be used as an interpreter without installing
-anything into that environment. Test wheel installation from outside this
-checkout after changes to package boundaries. Record evidence under `PhD` and
-checkpoint the managed task through the repository's pinned workflow.
+Installed code must be independent of research runners and local data. Keep
+optional engines optional at import time. Tests use synthetic inputs and
+independent analytical references; never require a saved research run.
+
+Run the relevant unit tests after changes and test wheel installation outside
+the checkout after package-boundary edits. Store verification logs under PhD,
+and checkpoint the managed task through the repository's pinned workflow.

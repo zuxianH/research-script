@@ -1,1 +1,0 @@
-04_oscillator_finite_temperature/thermal_reference.py

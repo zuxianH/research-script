@@ -1,10 +1,7 @@
-import tempfile
-from pathlib import Path
 import unittest
 import numpy as np
 from yoshioka.phonon_pair_importance import BornPairProposal
 from yoshioka.stratified_pairs import BranchStratifiedPairs
-from benchmarks.complete_leading_eels import finite_json
 
 
 class StratifiedPairTests(unittest.TestCase):
@@ -32,7 +29,5 @@ class StratifiedPairTests(unittest.TestCase):
         labels=6*big[1][:,0]+big[1][:,1]
         np.testing.assert_array_equal(np.bincount(labels),np.full(36,16))
 
-    def test_nonfinite_display_interval_not_misreported_as_zero(self):
-        self.assertEqual(finite_json({'a':np.array([np.inf,1.]),'b':float('nan')}),{'a':[None,1.],'b':None})
 
 if __name__=='__main__':unittest.main()

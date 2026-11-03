@@ -1,1 +1,0 @@
-14_two_phonon_eels/complete_component_profile.py

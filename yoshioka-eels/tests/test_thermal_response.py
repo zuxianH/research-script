@@ -1,18 +1,13 @@
-"""Benchmark 4 thermodynamics, signed response, independent reference, and limits."""
+"""Thermodynamics, signed response, independent references, and limits."""
 
-import json
-from pathlib import Path
-import tempfile
 import unittest
-from unittest.mock import patch
 
 import numpy as np
 from scipy.constants import Boltzmann, elementary_charge
 from scipy.integrate import trapezoid
 from scipy.stats import poisson, skellam
 
-from benchmarks.thermal_harmonic_response import ThermalConfig, detailed_balance, run_benchmark
-from benchmarks.thermal_reference import (
+from references.thermal_reference import (
     elastic_and_leading_terms, energy_window, exact_log_weights, exact_weights,
     exact_window_tail, reference_parameters, thermal_correlation,
 )
@@ -107,20 +102,6 @@ class ThermalResponseTests(unittest.TestCase):
             direct = float(np.sum(exact_weights(outside, eta, self.energy, 1000)))
             self.assertLess(abs(direct - tail['omitted_weight']), 1e-24)
 
-    def test_detailed_balance_mixed_residual_and_resolution_policy(self):
-        changes = np.arange(-32, 33)
-        exact = exact_weights(changes, 4, self.energy, 1000)
-        x = self.energy / (Boltzmann * 1000)
-        balance = detailed_balance(changes, exact, x, 1e-10, 1e-8, 1e-12)
-        self.assertLess(balance['maximum_mixed_residual'], 1)
-        self.assertLess(balance['maximum_resolved_log_ratio_error'], 1e-12)
-        self.assertGreater(balance['resolved_pair_count'], 0)
-        altered = exact.copy()
-        altered[changes == -1] += 0.001
-        self.assertGreater(detailed_balance(changes, altered, x, 1e-10, 1e-8, 1e-12)['maximum_mixed_residual'], 1)
-        tiny = detailed_balance(np.array([-1, 0, 1]), np.array([0, 0.9, 0.1]), 1000, 1e-10, 1e-8, 1e-12)
-        self.assertEqual(tiny['resolved_pair_count'], 0)
-        self.assertIsNone(tiny['maximum_resolved_log_ratio_error'])
 
     def test_thermal_coherent_amplitude_differs_from_zero_energy_line(self):
         state = ThermalOscillatorState(self.energy, 300)
@@ -224,49 +205,10 @@ class ThermalResponseTests(unittest.TestCase):
         for temperature in (-1, np.inf, np.nan):
             with self.assertRaises(ValueError):
                 ThermalOscillatorState(self.energy, temperature)
-        for configuration in ({'temperature_k': -1}, {'initial_tail_tolerance': 0}, {'quadrature_orders': (64,)}, {'eta': -1}, {'q_inv_angstrom': 1, 'eta': 4}):
-            with self.assertRaises(ValueError):
-                ThermalConfig(**configuration)
         with self.assertRaises(ValueError):
             transition_sum(np.eye(2), np.ones(3), 1)
 
 
-class ThermalBenchmarkTests(unittest.TestCase):
-    def test_default_sweep_acceptance_and_matrix_cache(self):
-        with patch('benchmarks.thermal_harmonic_response.fock_scattering_matrix', wraps=fock_scattering_matrix) as exponential:
-            results = run_benchmark(ThermalConfig())
-        self.assertEqual(results['status'], 'PASS', results['checks'])
-        self.assertEqual(len(results['cases']), 36)
-        self.assertEqual(exponential.call_count, 6 * 4)  # Reused for all six T.
-        self.assertEqual(results['optional_propagation']['status'], 'NOT_PERFORMED')
-        self.assertEqual(results['prior_benchmark_statuses_preserved']['elastic_si110']['status'], 'FAIL')
-        self.assertTrue(all(all(case['checks'].values()) for case in results['cases']))
-        json.dumps(results, allow_nan=False)
-
-    def test_underresolved_quadrature_reports_failure_without_looser_tolerances(self):
-        results = run_benchmark(ThermalConfig(sweep_etas=(4,), sweep_temperatures_k=(300,), quadrature_orders=(8, 16), working_dimensions=(64, 96)))
-        self.assertEqual(results['status'], 'FAIL')
-        self.assertFalse(results['checks']['quadrature_convergence'])
-        self.assertEqual(results['parameters']['line_tolerance'], 1e-10)
-
-    def test_output_data_and_preservation_guard(self):
-        with tempfile.TemporaryDirectory(prefix='yoshioka-thermal-output-') as directory:
-            output = Path(directory)
-            previous = b'{"benchmark":"Benchmark 3","status":"PASS"}\n'
-            (output / 'results.json').write_bytes(previous)
-            with self.assertRaisesRegex(ValueError, 'another benchmark'):
-                run_benchmark(ThermalConfig(), output)
-            self.assertEqual((output / 'results.json').read_bytes(), previous)
-            self.assertFalse((output / 'arrays').exists())
-        with tempfile.TemporaryDirectory(prefix='yoshioka-thermal-data-') as directory:
-            output = Path(directory)
-            results = run_benchmark(ThermalConfig(sweep_etas=(0.1,), sweep_temperatures_k=(300,), working_dimensions=(64, 96), quadrature_orders=(64, 128)), output)
-            self.assertEqual(results['status'], 'PASS')
-            case = results['cases'][0]
-            with np.load(output / case['artifact']) as data:
-                self.assertTrue(np.any(data['energy_losses_j'] < 0))
-                self.assertEqual(data['energy_losses_j'][case['gain_max']], 0)
-                self.assertLess(abs(sum(data['fock_weights']) - 1), 1e-10)
 
 
 if __name__ == '__main__':

@@ -1,1 +1,0 @@
-05_lattice_dynamics/si_lattice_dynamics.py

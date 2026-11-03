@@ -1,4 +1,4 @@
-"""Installation boundaries and compatibility of relocated checkpoint helpers."""
+"""Installation boundaries and stable checkpoint serialization."""
 
 from dataclasses import dataclass
 import importlib.abc
@@ -38,26 +38,27 @@ class PackagePortabilityTests(unittest.TestCase):
             sys.meta_path.remove(guard)
             sys.modules.update(loaded)
 
-    def test_fingerprint_and_checkpoint_bytes_match_original_helpers(self):
-        from benchmarks import workflow_io
+    def test_fingerprint_and_checkpoint_bytes_preserve_serialization_contract(self):
+        import hashlib
 
         @dataclass
         class Settings:
             energy_eV: float = 60000.
             count: int = 3
 
-        self.assertEqual(fingerprint(Settings()), workflow_io.fingerprint(Settings()))
+        expected_settings = b'{"count": 3, "energy_eV": 60000.0}'
+        self.assertEqual(fingerprint(Settings()), hashlib.sha256(expected_settings).hexdigest())
         with tempfile.TemporaryDirectory() as directory:
-            a, b = Path(directory) / "a.json", Path(directory) / "b.json"
+            a = Path(directory) / "a.json"
             data = {"complex": 2 + 3j, "array": np.array([1., 2.]), "count": np.int64(3)}
             json_write(a, data)
-            workflow_io.json_write(b, data)
-            self.assertEqual(a.read_bytes(), b.read_bytes())
-            self.assertEqual(sha256(a), workflow_io.sha256(b))
+            expected = b'{\n  "complex": "(2+3j)",\n  "array": [\n    1.0,\n    2.0\n  ],\n  "count": 3\n}\n'
+            self.assertEqual(a.read_bytes(), expected)
+            self.assertEqual(sha256(a), hashlib.sha256(expected).hexdigest())
             self.assertEqual(json.loads(a.read_text())["array"], [1., 2.])
             with self.assertRaises(ValueError):
                 json_write(a, {"bad": float("nan")})
-            self.assertEqual(a.read_bytes(), b.read_bytes())
+            self.assertEqual(a.read_bytes(), expected)
 
     def test_primitive_mapping_recovers_basis_and_translations(self):
         from types import SimpleNamespace

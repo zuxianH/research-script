@@ -1,13 +1,9 @@
 import unittest
-import json
-import tempfile
-from pathlib import Path
 import numpy as np
 from scipy.linalg import expm
 from scipy import constants
 from yoshioka.thermal_dyson_words import (words_through_two, label, local_step,
     thermal_moment, gram_matrix)
-from benchmarks.approximate_eels_repeated import dense_thermal_control
 
 
 class ThermalDysonTests(unittest.TestCase):
@@ -40,42 +36,7 @@ class ThermalDysonTests(unittest.TestCase):
         self.assertGreater(matrix[a, b], 0)
         self.assertEqual(matrix[words.index((0,)), words.index((1,))], 0)
 
-    def test_finite_temperature_words_against_dense_coupled_channels(self):
-        for temperature in (300, 1000):
-            result = dense_thermal_control(temperature)
-            self.assertTrue(result['passed'], result)
-            json.dumps(result, allow_nan=False)
-            errors = [r['thermal_complex_state_error'] for r in result['order_scaling']]
-            self.assertGreater(errors[2]/errors[1], 7)
-            self.assertGreater(errors[1]/errors[0], 7)
 
-    def test_first_word_matches_existing_streamed_source_for_both_signs(self):
-        from benchmarks.approximate_eels import prepare_background, covariance_path, PRIMITIVE
-        from benchmarks.workflow_io import ResourceLimits
-        from yoshioka.lattice_dynamics import RealSpaceForceConstants
-        from yoshioka.bulk_thermal_source import covariance_integral, mode_group
-        from yoshioka.fourier_depth_fields import complex_depth_field, fourier_depth_provider
-        from yoshioka.bloch_source_windowed import source_exit_bloch
-        from yoshioka.thermal_dyson_words import propagate_words
-        model = RealSpaceForceConstants.load(PRIMITIVE)
-        covariance, _ = covariance_integral(model, 300, 4)
-        config = {'selected_repeats': 2, 'padding_angstrom': 12, 'selected_covariance_mesh': 4}
-        settings = {'temperature_k': 300, 'grid_unit': 5, 'slices': 33}
-        with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory); path = covariance_path(directory, 300, 4); path.parent.mkdir()
-            path.write_text(json.dumps({'covariance_m2': covariance.tolist()}))
-            positions, reference, length, covariance, grid, bg, inc, _ = prepare_background(config, settings, directory, ResourceLimits(60, 2))
-            omega, d, shift, _ = mode_group(model, positions, [grid.lx_m, grid.ly_m], [.17, -.21, .13], .5, reference)
-            field = complex_depth_field(positions, covariance, grid, length, 33, directory/'source.npy', d, shift)
-            provider = fourier_depth_provider(field, grid)
-            words, coefficients, _, _ = propagate_words(grid, omega, np.tile(shift, (len(omega), 1)), length, 33,
-                                                       provider, lambda i: bg[i, 0])
-            for sign in (1, -1):
-                at = provider if sign == 1 else lambda i: provider(i).conj()
-                expected = source_exit_bloch(grid, 60000*constants.elementary_charge, sign*omega, length, 33,
-                                             at, lambda i: inc[i], lambda i: bg[i, 0], sign*shift)
-                indices = [words.index((j,)) for j in range(0 if sign == 1 else len(omega), len(omega) if sign == 1 else 2*len(omega))]
-                np.testing.assert_allclose(coefficients[indices], expected, rtol=1e-12, atol=1e-16)
 
     def test_two_insertions_nonzero_bloch_shift_against_dense_fock_splitting(self):
         from yoshioka.thermal_dyson_words import propagate_words

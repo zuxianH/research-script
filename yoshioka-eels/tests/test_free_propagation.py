@@ -1,12 +1,11 @@
-"""Independent analytical checks and regression coverage for Benchmark 1."""
+"""Independent analytical checks of free propagation."""
 
 import unittest
 
 import numpy as np
 from scipy.constants import c, elementary_charge, hbar, m_e
 
-from benchmarks.free_electron import BenchmarkConfig, TOLERANCES, run_benchmark
-from benchmarks.reference_solutions import (
+from references.free_reference import (
     constant_wave,
     gaussian_wave,
     periodic_mode,
@@ -137,28 +136,6 @@ class FreePropagationTests(unittest.TestCase):
             self.propagator.propagate(np.ones(self.grid.shape), np.nan)
 
 
-class BenchmarkIntegrationTests(unittest.TestCase):
-    def test_all_default_acceptance_checks_and_grid_refinement(self):
-        results = run_benchmark(BenchmarkConfig())
-        self.assertEqual(results["status"], "PASS", results["summary"])
-        for key, passed in results["checks"].items():
-            with self.subTest(check=key):
-                self.assertTrue(passed)
-        self.assertEqual([entry["nx"] for entry in results["grid_refinement"]], [64, 128, 256])
-        for entry in results["grid_refinement"]:
-            maximum = max(case["relative_wave_error"] for case in entry["cases"])
-            if entry["nx"] == 64:
-                self.assertGreater(maximum, TOLERANCES["gaussian_relative_wave_error"])
-            else:
-                self.assertLess(maximum, TOLERANCES["gaussian_relative_wave_error"])
-        # No monotonicity requirement at the roundoff floor.
-
-    def test_underresolved_grid_reports_failure_without_relaxing_tolerances(self):
-        results = run_benchmark(BenchmarkConfig(nx=64, ny=64, refinement_grids=(64,)))
-        self.assertEqual(results["status"], "FAIL")
-        self.assertFalse(results["checks"]["gaussian_relative_wave_error"])
-        self.assertFalse(results["checks"]["gaussian_spectral_tail_negligible"])
-        self.assertEqual(results["tolerances"], TOLERANCES)
 
 
 if __name__ == "__main__":

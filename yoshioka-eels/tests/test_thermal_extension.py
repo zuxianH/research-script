@@ -3,6 +3,7 @@ import unittest
 
 import numpy as np
 from scipy import constants
+from scipy.integrate import trapezoid
 
 from yoshioka.thermal_model_validation import (
     PLANCK_MEV_PS, fit_mode_profile, linewidth_gate, mode_periodogram,
@@ -16,7 +17,7 @@ class FiniteWindowTests(unittest.TestCase):
         for kind, atol in [('hann', 1e-7), ('rectangular', 3e-4)]:
             t=25.; extent=1000 if kind=='rectangular' else 200
             e=np.linspace(-extent*PLANCK_MEV_PS/t,extent*PLANCK_MEV_PS/t,500001)
-            integral=np.trapezoid(window_power_kernel(e,t,kind),e)
+            integral=trapezoid(window_power_kernel(e,t,kind),e)
             self.assertLess(abs(integral-1),atol)
             self.assertAlmostEqual(window_fwhm_mev(t,kind)/window_fwhm_mev(2*t,kind),2.,places=10)
 
@@ -54,21 +55,6 @@ class FiniteWindowTests(unittest.TestCase):
         self.assertAlmostEqual(gate['lifetime_population_ps'],expected)
 
 
-class MaterialCorrelationTests(unittest.TestCase):
-    def test_trace_and_channel_sum_for_orthogonal_equal_energy_targets(self):
-        from benchmarks.material_comparison_extension import dense_trace_correlation,transition_lines
-        # Two degenerate final states are incoherent, although energies match.
-        basis=np.array([[0,0],[1,0],[0,1]])
-        quantum=60e-3*constants.elementary_charge
-        omega=np.array([quantum/constants.hbar]*2)
-        operator=np.zeros((1,3,3),complex)
-        operator[0,1,0]=.3;operator[0,2,0]=-.3
-        ell,weights,tail,prob=transition_lines(operator,basis,omega,0.,[True])
-        self.assertAlmostEqual(weights[ell==1][0],.18)
-        times=np.array([0.,.003,.009])
-        trace=dense_trace_correlation(operator,basis@(constants.hbar*omega)/(1e-3*constants.elementary_charge),prob,times,[True])
-        channel=np.exp(-1j*times[:,None]*1e-12*(ell[None,:]*60e-3*constants.elementary_charge)/constants.hbar)@weights
-        np.testing.assert_allclose(trace,channel,rtol=1e-13,atol=1e-14)
 
 
 if __name__=='__main__':unittest.main()

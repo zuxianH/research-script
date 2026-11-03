@@ -1,1 +1,0 @@
-11_thermal_models/anharmonic_followup.py

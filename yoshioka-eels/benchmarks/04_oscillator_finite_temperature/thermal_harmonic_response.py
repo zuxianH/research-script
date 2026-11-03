@@ -1,1 +1,0 @@
-../thermal_harmonic_response.py

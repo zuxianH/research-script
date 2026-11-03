@@ -1,4 +1,4 @@
-"""Show the installed package and its scientific scope."""
+"""Show installed package information."""
 
 import argparse
 from importlib.metadata import version
@@ -13,7 +13,6 @@ def main():
     print(f"Code: {Path(__file__).resolve().parent}")
     print("Units: SI unless a function explicitly states otherwise.")
     print("Includes paraxial propagation, coupled channels, and leading-pair EELS.")
-    print("The four-repeat complete-pair benchmark remains NOT_ACCEPTED.")
 
 
 if __name__ == "__main__":

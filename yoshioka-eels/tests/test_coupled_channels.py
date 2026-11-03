@@ -8,7 +8,7 @@ from yoshioka.coupled_channels import (ChannelSegment, SplitChannelPropagator, c
     fourier_populations, linear_displacement_block, oscillator_phase_block, thermal_channel_weights)
 from yoshioka.elastic_propagation import electron_speed
 from yoshioka.free_propagation import TransverseGrid
-from benchmarks.channel_reference import dense_generators, dense_propagate, distorted_first_order
+from references.channel_reference import dense_generators, dense_propagate, distorted_first_order
 from yoshioka.distorted_channels import distorted_wave_orders
 
 

@@ -1,1 +1,0 @@
-14_two_phonon_eels/two_phonon_validation.py

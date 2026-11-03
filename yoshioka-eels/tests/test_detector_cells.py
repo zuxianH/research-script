@@ -1,15 +1,9 @@
 import unittest
-import tempfile
-from pathlib import Path
 
 import numpy as np
 from scipy.integrate import quad
 
 from yoshioka.detector_cells import cell_fractions, circle_rectangle_area
-from benchmarks.detector_cubature import checkpointed_cells
-from benchmarks.workflow_io import ResourceLimits
-from tests.test_eels_convergence import synthetic_lattice
-from yoshioka.lattice_dynamics import finite_periodic_modes
 
 
 class DetectorCellTests(unittest.TestCase):
@@ -49,26 +43,6 @@ class DetectorCellTests(unittest.TestCase):
             errors.append(abs(estimate-expected))
         self.assertLess(errors[-1], errors[0]/8)
 
-    def test_cell_cubature_checkpoint_resume_matches_uninterrupted(self):
-        model = synthetic_lattice()
-        modes = finite_periodic_modes(model, (2, 2, 2))
-        spec = {'positions_m': modes['positions_m'].tolist(), 'covariance_m2': (np.eye(3)*1.8e-23).tolist(),
-                'incident_energy_ev': 60000, 'transverse_lengths_m': [2*model.cell_m[0, 0], 2*model.cell_m[1, 1]],
-                'specimen_thickness_m': 2*model.cell_m[2, 2]}
-        class StopAfterTwoBatches:
-            calls = 0
-            def check(self, **kwargs):
-                self.calls += 1
-                if self.calls == 3:
-                    raise TimeoutError('test controlled stop')
-        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-            _, partial, _ = checkpointed_cells(model, spec, 3, [0, 0, 0], Path(a), StopAfterTwoBatches(), batch=5)
-            self.assertEqual(partial['completed_q'], 10)
-            _, resumed, arrays = checkpointed_cells(model, spec, 3, [0, 0, 0], Path(a), ResourceLimits(60, 2), batch=5)
-            _, fresh, reference = checkpointed_cells(model, spec, 3, [0, 0, 0], Path(b), ResourceLimits(60, 2), batch=5)
-            self.assertEqual(resumed['status'], 'COMPLETE')
-            for name in arrays:
-                np.testing.assert_array_equal(arrays[name], reference[name])
 
 
 if __name__ == '__main__':

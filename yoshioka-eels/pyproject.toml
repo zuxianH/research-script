@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "yoshioka-eels"
 version = "0.2.0"
-description = "Paraxial electron propagation and coupled-channel EELS research tools"
+description = "Paraxial electron propagation and coupled-channel EELS"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.24", "scipy>=1.10", "matplotlib>=3.6", "psutil>=5.9"]
@@ -17,6 +17,9 @@ lattice-reference = ["lammps==2025.7.22.4.0", "mpich==5.0.2", "hiphive==1.5", "p
 [project.scripts]
 yoshioka-eels = "yoshioka.__main__:main"
 
+[tool.setuptools]
+include-package-data = false
+
 [tool.setuptools.packages.find]
-include = ["yoshioka*"]
+include = ["yoshioka", "yoshioka.*"]
 namespaces = false
