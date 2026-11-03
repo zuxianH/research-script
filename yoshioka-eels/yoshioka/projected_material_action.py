@@ -30,11 +30,15 @@ def field_preflight(atoms, n, fields, steps, channels, working_dimension=32, til
     construction=16*tile*max(fields,steps)*(12+5)
     buffers=16*q*(channels**2*8+24*channels)+16*q*atoms*2
     oscillator=16*tile*working_dimension*working_dimension*3
-    resident=2*phase+construction+buffers+oscillator+256*1024**2
+    # A mapped template is populated completely before its pages are dropped.
+    # During full-storage conversion it can also coexist with its copied array.
+    mapped_construction_profile=16*q*steps
+    resident=2*phase+construction+buffers+oscillator+mapped_construction_profile+256*1024**2
     if storage=='full': resident+=profiles
     elif storage!='mapped': raise ValueError('storage must be mapped or full')
     return dict(atoms=atoms,n=n,m=m,field_points=fields,propagation_intervals=steps,channels=channels,
                 full_complex_profile_bytes=profiles,phase_bytes=phase,construction_bytes=construction,
+                mapped_construction_profile_bytes=mapped_construction_profile,
                 estimated_peak_rss_bytes=resident,storage=storage,transfer_tile=tile,
                 note='Conservative estimate, not measured RSS; mapped pages dropped after construction and each read')
 

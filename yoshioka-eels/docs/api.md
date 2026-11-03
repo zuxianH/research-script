@@ -75,3 +75,7 @@ Translation-equivalent local covariances are checked to relative `1e-10` and
 averaged at roundoff level. Raw covariances and the translation residual remain
 in the returned evidence. This is local inactive Gaussian averaging, not
 explicit scattering through all phonon modes.
+
+Resource preflight includes one fully resident mapped profile during construction
+and conversion, in addition to phase tensors, transfer tiles and FFT buffers.
+Read-only mapped profiles are dropped after construction and each slice read.

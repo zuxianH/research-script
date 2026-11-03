@@ -62,6 +62,10 @@ class ProjectedMaterialActionTests(unittest.TestCase):
     def test_memory_counts_actual_atoms_and_copies(self):
         small=field_preflight(16,33,769,769,6)
         self.assertEqual(small['full_complex_profile_bytes'],16*16*65*65*769)
+        # One mapped file can remain fully resident before construction flush.
+        large=field_preflight(4,97,769,1537,6)
+        self.assertGreater(large['estimated_peak_rss_bytes'],16*193*193*1537)
+        self.assertEqual(large['mapped_construction_profile_bytes'],16*193*193*1537)
         self.assertGreater(field_preflight(16,65,1537,1537,6,storage='full')['estimated_peak_rss_bytes'],4*1024**3)
         self.assertLess(field_preflight(16,65,1537,1537,6)['estimated_peak_rss_bytes'],4*1024**3)
 
