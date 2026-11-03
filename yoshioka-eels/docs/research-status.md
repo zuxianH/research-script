@@ -40,3 +40,17 @@ The package migration records and test logs are stored separately at
 The original source, scientific environment and completed result directories
 are preserved. A software regression pass establishes packaging compatibility,
 not material accuracy, speed advantage or physical convergence.
+
+## Separate SNAP 10 K finite-bath pilot
+
+A new finite model, `SNAP_Si110_T10_finite1x1x4_GammaXY_nonlinear_PHP_v1`, uses
+fresh supplied SNAP forces and a 16-atom periodic nuclear reference with two
+active transverse Gamma optical coordinates. The p=2 cutoff retains six target
+states and repeated scattering, with full nonlinear displacement phases.
+
+The local [report](../benchmark_results/15_snap_two_mode/si110_snap_T10_p2_v1/REPORT.html)
+records actual spectra, channel probabilities, independent p/grid/depth checks,
+failures, resource measurements and a conditional raw SNAP/TRPMD comparison.
+The pilot remains a separate finite optical approximation. Neither that result
+nor software tests change the NOT_ACCEPTED bulk decision, corrected complete-net
+production count zero, rejected controls or the open milestones above.

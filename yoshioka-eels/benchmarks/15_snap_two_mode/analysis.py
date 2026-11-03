@@ -145,6 +145,30 @@ def case_comparisons(out):
             off=(n-b.shape[-1])//2;amp=amp[:,off:off+b.shape[-1],off:off+b.shape[-1]]
             amplitude=float(np.linalg.norm(amp-b)/np.linalg.norm(b))
         else: amplitude=None
+        all_angle=np.sum(abs(wave)**2,axis=(1,2))
+        # Executed initial state is the unrenormalized optical vacuum; its tiny
+        # omitted mass is retained in the exit file and the thermal manifest.
+        with np.load(folder/'exit.npz') as z:
+            all_angle*=z['executed_initial_weights'][0]
+            masks=z['detector_masks']
+        acceptances=np.column_stack((all_angle,prob))
+        if not (folder/'channel_probabilities_all_acceptances.csv').exists():
+            np.savetxt(folder/'channel_probabilities_all_acceptances.csv',np.column_stack((basis,acceptances)),delimiter=',',comments='',header='final_a,final_b,all_retained_beams,0_20_mrad,0_5_mrad,5_10_mrad,10_20_mrad')
+        sectors=np.array([acceptances[basis.sum(axis=1)==i].sum(axis=0) for i in range(int(basis.sum(axis=1).max())+1)])
+        if not (folder/'sector_probabilities.npz').exists():
+            with np.load(folder/'spectra.npz') as z:
+                two_spectrum=z['components_per_mev'][:,basis.sum(axis=1)==2].sum(axis=(0,1))
+                axis=z['energy_mev']
+            np.savez(folder/'sector_probabilities.npz',sector_occupations=np.arange(len(sectors)),acceptances=['all retained beams',*DETECTORS],sector_absolute_weights=sectors,two_phonon_density_per_mev=two_spectrum,energy_mev=axis)
+            np.savetxt(folder/'sector_probabilities.csv',np.column_stack((np.arange(len(sectors)),sectors)),delimiter=',',comments='',header='total_occupation,all_retained_beams,0_20_mrad,0_5_mrad,5_10_mrad,10_20_mrad')
+            np.savetxt(folder/'two_phonon_spectrum.csv',np.column_stack((axis,two_spectrum.T)),delimiter=',',comments='',header='energy_mev,0_20_mrad_per_mev,0_5_mrad_per_mev,5_10_mrad_per_mev,10_20_mrad_per_mev')
+        quantum=np.array(json.loads((out/'phonons/bath.json').read_text())['quanta_mev'])*1e-3*constants.e
+        ratios=np.exp(-quantum/(10*constants.k));cutoff=int(basis.sum(axis=1).max())
+        thermal_tail=float(ratios[0]**(cutoff+1)+(1-ratios[0])*sum(ratios[0]**j*ratios[1]**(cutoff-j+1) for j in range(cutoff+1)))
+        json_write(folder/'probability_audit.json',{'thermal_probability_outside_target_basis':thermal_tail,
+                   'log_exact_vacuum_weight':float(np.log1p(-ratios).sum()),'all_channel_sum':float(all_angle.sum()),'annular_detector_partition_exact':bool(np.array_equal(masks[0],masks[1:].sum(axis=0))),
+                   'channel_detector_partition_error':float(np.max(abs(prob[:,0]-prob[:,1:].sum(axis=1)))),
+                   'two_phonon_sector_0_20':float(sectors[2,1]),'fractions_denominator':'inclusive probability in the specified detector; all absolute weights retained'})
         record={'case':name,'completed':True,'max_channel_detector_absolute_difference':float(abs(difference).max()),
                 'max_channel_detector_error_over_tolerance':float(np.max(abs(difference)/tolerance)),
                 'channel_detector_pass':bool(np.all(abs(difference)<=tolerance)),
@@ -155,6 +179,20 @@ def case_comparisons(out):
                 'changed_0_20':float(prob[np.sum(basis,axis=1)>0,0].sum())}
         np.savez(folder/'difference_from_pilot.npz',basis=base['basis'],absolute_channel_detector_difference=difference,tolerance=tolerance)
         rows.append(record)
+    support=[]
+    for coarse,fine in ((33,65),(65,97)):
+        a=f'p2_N{coarse}_F769_S769_D32';b=f'p2_N{fine}_F769_S769_D32'
+        if a not in folders or b not in folders:continue
+        with np.load(folders[a]/'spectra.npz') as z:pa=z['probability'][0]
+        with np.load(folders[b]/'spectra.npz') as z:pb=z['probability'][0]
+        with np.load(folders[a]/'exit.npz') as z:wa=z['exit_coefficients'][0]
+        with np.load(folders[b]/'exit.npz') as z:wb=z['exit_coefficients'][0]
+        offset=(fine-coarse)//2
+        amp=float(np.linalg.norm(wb[:,offset:offset+coarse,offset:offset+coarse]-wa)/np.linalg.norm(wa))
+        ratio=float(np.max(abs(pb-pa)/(1e-10+.01*abs(pa))))
+        support.append({'coarse':a,'fine':b,'max_channel_detector_error_over_tolerance':ratio,
+                        'complex_exit_relative_difference':amp,'passed':ratio<=1 and amp<=1e-4})
+    json_write(out/'checks/adjacent_support_comparisons.json',support)
     json_write(out/'checks/case_comparisons.json',{'reference':BASE,'rows':rows,'criterion':'each final channel/detector: |delta P| <= 1e-10 + 0.01 P_reference; common complex exit relative error <= 1e-4; no fitted phase'})
     return rows,folders
 
@@ -174,7 +212,6 @@ def figures(out,folders,comparisons):
     fig,axs=plt.subplots(2,1,figsize=(10,7),layout='constrained')
     for j,label in enumerate(labels):axs[0].plot(energy,components[j,0],label=label,color=colors[j])
     axs[0].plot(energy,s['inclusive_per_mev'][0],color='black',ls='--',label='inclusive total')
-    axs[0].set(xlim=(-5,140),yscale='symlog',ylim=(0,None),linthresh=1e-12) if False else None
     axs[0].set_yscale('symlog',linthresh=1e-12);axs[0].set(xlim=(-5,140),ylabel='Probability / incident electron / meV',title='SNAP two-mode p=2 pilot • 10 K • 1.5483 nm • 0–20 mrad')
     axs[0].legend(ncol=4,fontsize=9)
     for j in range(1,len(labels)):axs[1].plot(energy,components[j,0],label=labels[j],color=colors[j])
@@ -211,11 +248,13 @@ def figures(out,folders,comparisons):
              model_components=components[:,0]/model_area,reference_total=scaled_ref,model_factor=1/model_area,reference_factor=1/ref_area)
     np.savetxt(out/'reference/display_overlay.csv',np.column_stack((energy,scaled_model,scaled_ref)),delimiter=',',comments='',header='energy_mev,model_area_normalized,conditional_reference_area_normalized')
     fig,axs=plt.subplots(2,1,figsize=(11,8),layout='constrained')
+    shown_energy=(energy>=5)&(energy<=160)
     for ax in axs:
-        ax.plot(energy,scaled_model,color='#163f5f',label='Yoshioka: 4 repeats, two Gamma modes, 0–20 mrad')
-        ax.plot(energy,scaled_ref,color='#bf562c',label='TRPMD: filename 52 repeats, 165 beads, radius 20 pixels')
-        for j in range(1,6):ax.plot(energy,components[j,0]/model_area,color=colors[j],alpha=.45,lw=.9)
+        ax.plot(energy[shown_energy],scaled_model[shown_energy],color='#163f5f',label='Yoshioka: 4 repeats, two Gamma modes, 0–20 mrad')
+        ax.plot(energy[shown_energy],scaled_ref[shown_energy],color='#bf562c',label='TRPMD: filename 52 repeats, 165 beads, radius 20 pixels')
+        for j in range(1,6):ax.plot(energy[shown_energy],components[j,0,shown_energy]/model_area,color=colors[j],alpha=.45,lw=.9)
         ax.set(xlim=(5,160),ylabel='Display-only density (area 5–160 meV = 1)')
+        ax.set_ylim(bottom=min(0.,float(scaled_model[shown_energy].min()),float(scaled_ref[shown_energy].min()))*1.1)
     axs[0].set(title='Qualitative shape comparison • mismatched model, thickness and acceptance');axs[0].legend(fontsize=9)
     axs[1].set_yscale('symlog',linthresh=1e-7);axs[1].set(xlabel='Energy loss (meV); reference sign/sampling conditional',title='No energy alignment, background subtraction, peak fitting or Kubo re-correction')
     fig.text(.5,-.015,'Model: imposed 2 meV FWHM. Reference: additional 2 meV FWHM; native window/resolution unknown. Pilot numerically unconverged.',ha='center',fontsize=9)
@@ -244,11 +283,22 @@ def write_report(out,rows,fc,reference,factors):
     with np.load(out/'cases'/BASE/'spectra.npz') as a:prob=a['probability'][0];loss=a['energy_loss_mev'][0]
     with np.load(out/'cases'/BASE/'exit.npz') as a:basis=a['basis']
     manifests={r['case']:json.loads((out/'cases'/r['case']/'manifest.json').read_text()) for r in rows}
+    execution={}
+    for log in sorted((out/'logs').glob('*_propagate.json')):
+        entry=json.loads(log.read_text());a=entry['arguments'];tag=a.get('case_tag','')
+        name=f"p{a['p']}_N{a['n']}_F{a['fields']}_S{a['steps']}_D{a['dimension']}"+('_'+tag if tag else '')
+        info=execution.setdefault(name,{'attempts':0,'total_invocation_seconds':0.,'maximum_recorded_rss_mib':0.,'logs':[]})
+        info['attempts']+=1;info['logs'].append(str(log.relative_to(out)))
+        if 'resources' in entry:
+            info['total_invocation_seconds']+=entry['resources']['elapsed_seconds']
+            info['maximum_recorded_rss_mib']=max(info['maximum_recorded_rss_mib'],entry['resources']['peak_process_rss_mib'])
+    json_write(out/'execution_summary.json',{'cases':execution,'completed_cases':len(rows),'production_count':0,'bulk_status':'NOT_ACCEPTED'})
     core=manifests[BASE]['source']
     lines=['# SNAP Si [110], 10 K: finite two-mode p=2 pilot','',
       '**Status: executed pilot, NUMERICALLY_UNCONVERGED.** This is a finite 16-atom optical-bath calculation, not a bulk material acceptance result.',
       '',f"Model: `{cfg['model_id']}`. Exact pilot source revision: `{core['revision']}`; numerical source digest `{manifests[BASE]['contract']['source_sha256']}`. Source snapshots and dependency manifests are retained under `provenance/source/`.",
       '', '## Executed physical model and parameters','',
+      'The explicit force interface follows the LAMMPS SNAP coefficient/parameter/element mapping described in https://docs.lammps.org/pair_snap.html; installed LAMMPS version 2025-07-22 is recorded in the execution manifest.', '',
       '| Parameter | Executed value |','|---|---|',
       '| Nuclear force model | LAMMPS `pair_style snap`, metal units, Si mapping; supplied files unchanged |',
       '| Static cell | '+', '.join(f'{v:.10f}' for v in np.diag(eq['cell_angstrom']))+' Å; relaxed basis |',
@@ -274,15 +324,16 @@ def write_report(out,rows,fc,reference,factors):
     lines+=['| summed n=2 | — | '+' | '.join(f'{v:.10e}' for v in two)+' |','',
       'Individual (2,0), (1,1), (0,2) populations depend on the basis within an exactly degenerate optical subspace. The fixed x/y convention, actual small finite-displacement splitting, mode phases, eigen residuals and summed sector are retained. Fractions in `channels.csv` use each detector’s inclusive probability as denominator; all original absolute probabilities remain available.',
       '', '## Checks and unresolved convergence','',
-      'Criteria were frozen in `inputs/config.json` before running the pilot. Probability comparisons use |ΔP| ≤ 1e−10 + 0.01 P for every final channel and detector; the common-support complex exit comparison uses relative error ≤1e−4 without phase fitting. These finite-observable criteria do not transfer the historical bulk weak-window floor.',
-      '', '| Case | Max probability error / tolerance | Complex exit difference | Probability check | Runtime (s) | Peak RSS (MiB) |','|---|---:|---:|---|---:|---:|']
+      'Criteria were frozen in `inputs/config.json` before running the pilot. Probability comparisons use |ΔP| ≤ 1e−10 + 0.01 P for every final channel and detector; the common-support complex exit comparison uses relative error ≤1e−4 without phase fitting. These finite-observable criteria do not transfer the historical bulk weak-window floor. The absolute term is a pilot probability-error budget per incident electron; it can dominate relative precision in very weak channels, so passing does not mean uniform 1% accuracy there.',
+      '', '| Case | Max probability error / tolerance | Complex exit difference | Probability check | All attempt time (s) | Peak RSS (MiB) |','|---|---:|---:|---|---:|---:|']
     for r in rows:
-        m=manifests[r['case']];cost=m['resources']
-        lines.append(f"| {r['case']} | {r['max_channel_detector_error_over_tolerance']:.6g} | {r['complex_exit_relative_difference_on_common_support']:.6g} | {'PASS' if r['channel_detector_pass'] else 'FAIL'} | {cost['elapsed_seconds']:.2f} | {cost['peak_process_rss_mib']:.1f} |")
-    lines+=['','These comparisons are diagnostic, including their failures. A few passing refinements do not establish continuum electron support, a complete phonon bath, longitudinal active displacements, thermal stability, anharmonic linewidths or external calibration. No pilot is promoted merely because the norm is conserved.',
+        m=manifests[r['case']];cost=execution[r['case']]
+        lines.append(f"| {r['case']} | {r['max_channel_detector_error_over_tolerance']:.6g} | {r['complex_exit_relative_difference_on_common_support']:.6g} | {'PASS' if r['channel_detector_pass'] else 'FAIL'} | {cost['total_invocation_seconds']:.2f} | {cost['maximum_recorded_rss_mib']:.1f} |")
+    lines+=['','Runtime totals include every recorded invocation for that case, including failed attempts and repeated setup on a resume; maximum RSS is across those invocations. Raw logs retain each attempt. These comparisons are diagnostic, including their failures. A few passing refinements do not establish continuum electron support, a complete phonon bath, longitudinal active displacements, thermal stability, anharmonic linewidths or external calibration. No pilot is promoted merely because the norm is conserved.',
       '', '| Force-constant case | Max sampled frequency change (meV) | Covariance relative change | Relative symmetry/sum-rule correction | Check |','|---|---:|---:|---:|---|']
     for r in fc:lines.append(f"| {r['case']} | {r['maximum_sampled_frequency_change_mev']:.6g} | {r['covariance_relative_change']:.6g} | {r['relative_correction']:.6g} | {'PASS' if r['passed'] else 'FAIL'} |")
     lines+=['',f"The equilibrium force/energy derivative discrepancy was {eq['derivative_absolute_error']:.3e} eV/Å. Raw and corrected force constants, signed frequencies, symmetry residuals and correction norms are retained. Tiny signed Gamma translation frequencies are identified by translation overlap and omitted explicitly; no physical unstable frequency is clipped. The 576-atom range is 8.6552 Å. Stability checks cover the commensurate grids and the finite bath, not every continuum wavevector.",
+      '', 'The first F1537/S769 attempt failed the strict field-relative Hermiticity guard in nearly zero vacuum fields (antisymmetric terms about 3e−32 J). Its failure log and original fields remain. Explicit conjugate momentum-pair construction fixes roundoff cancellation without weakening the guard; a separate paired-fields p2 case checks the exit amplitudes against the original pilot. One refinement was launched before the preceding process exit had been confirmed; all subsequent invocations use a single-worker file lock. This orchestration exception is retained rather than counted as resource-compliant evidence.',
       '', 'The mapped/full-storage action, independent reciprocal action and GH24/GH32 controls agree at approximately 1e−15 on the small complex-amplitude test. The maximum N33 transfer phase blocks agree between D32, D48, GH24 and GH32 below 1e−14. Regression tests include nonvacuum initialization, zero-prefix interruption, exact checkpoint resume, signed and degenerate transitions, detector partitions and spectral area. The initial two test failures were fixture selection and a test rounding tolerance tighter than the frozen area criterion; original failure logs are retained.',
       '', 'The old coordinate-action preflight now counts all atom profiles and construction copies. The new action streams memory-mapped atom fields and drops mapped pages after use; field and propagation grids are independent. Full complex profile storage estimates are 0.775 GiB at N33/F769, 6.10 GiB at N65/F1537 and 27.29 GiB at N97/F3073. These are storage estimates, not measured RSS. Source and per-case manifests record actual RSS/runtime; guards must not be bypassed.',
       '', '## Conditional qualitative TRPMD comparison','',
@@ -290,24 +341,44 @@ def write_report(out,rows,fc,reference,factors):
       '', 'The reference is the raw read-only `Si_5x7x52_10K_beads165_SNAP.npy`, verified float64 shape (600,267,266), 340905728 bytes, SHA-256 `46f97e1d7c651b9367d6e34c34adbf44f8d05dc67a64db3902375e714eea41b0`. The supplied analysis notebook hash is verified in `reference/analysis_evidence.json`.',
       '', 'The notebook uses (energy,y,x), FFT-centered energy, effective 7.5 fs sampling, and a radius-20-pixel circle at (133,133). The saved Studio settings corroborate timestep/stride but do not establish exact generation metadata. The energy spacing is 0.919037266 meV; the conditional native axis runs −275.711180 to +274.792143 meV. Fourier sign, native window, angular calibration, incident normalization and generation correction history remain unverified for this exact file. An adjacent notebook claims prior Kubo correction; this is analysis evidence, not a generation manifest. No further Kubo correction is applied.',
       '', '**The acceptances and thicknesses differ:** the model uses 0–20 mrad and four repeats, while the reference uses 20 pixels and a filename stating 5×7×52, 165 beads. A nearby 7280-atom structure supports the meaning of that geometry but is not linked to this array by provenance. Do not identify 20 pixels with 20 mrad. The two-mode harmonic model has a few lines and cannot reproduce the dispersive/acoustic bath or intrinsic anharmonic linewidths.',
+      '', 'On the conditional energy axis the model concentrates changed-state weight around 58.04 and 116.08 meV. The reference ROI also has broad low-energy weight and a broad high-energy tail. These differences are consistent with the stated model limitations, but this comparison cannot isolate a quantitative cause.',
       '', 'The reference curve is reduced directly from the raw array, conservatively rebinned, and forward-broadened by an additional Gaussian of 2 meV FWHM. That addition does not establish matched native resolution. The notebook’s separate sigma=1 meV (FWHM≈2.355 meV), full-sum normalization and reflect smoothing are reconstructed and saved separately. No background subtraction, energy shift, phonon-frequency adjustment, peak normalization or detector fitting is used.',
       '', f"For the display-only overlay, the interval is 5–160 meV and one factor per total curve is used: model {factors['model_factor']:.12g}, reference {factors['reference_factor']:.12g}. The same model factor multiplies every component. Native reference ROI signed mass is {reference['native_roi_signed_mass']:.12g}; conservative crop removes {reference['cropped_native_mass']:.12g}. Raw negative entries and signed reductions are retained. All transformations, native axis, extended broadening tails and display factors are saved.",
       '', 'No absolute-intensity accuracy, matched-thickness agreement, material accuracy, runtime advantage or bulk acceptance follows from this overlay.',
       '', '## Files and reproducibility','',
       '- `cases/*/exit.npz`: complex coefficients, initial/final labels, physical momentum axes, detector masks and unrenormalized thermal weights.',
       '- `cases/*/spectra.npz`, `spectra.csv`, `channels.csv`: native transitions, inclusive/changed/returning spectra and channel probabilities.',
+      '- `cases/*/channel_probabilities_all_acceptances.csv`, `sector_probabilities.npz`/`.csv`, `two_phonon_spectrum.csv`: full retained-beam channel weights, explicit sector sums and detector-resolved two-phonon spectra.',
       '- `phonons/`: relaxed structure, fresh raw/corrected SNAP force constants, signed modes, active vectors and full/inactive covariance.',
       '- `reference/`: raw reduction, every transformation, provenance statuses, display factors and native/cropped masses.',
       '- `checks/`, `logs/`, `provenance/`: checks, failures, resource records and exact source snapshots.',
       '', 'From `/home/zuxian/Documents/research-script/yoshioka-eels`, use the existing scientific interpreter without installing into it:',
       '', '```bash',
       'export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1',
-      '/home/zuxian/Documents/PhD/Yoshioka/.venv/bin/python benchmarks/15_snap_two_mode/run.py summarize',
+      'flock -n /home/zuxian/Documents/PhD/Yoshioka/benchmark_results/15_snap_two_mode/si110_snap_T10_p2_v1/.scientific-worker.lock timeout 600s /home/zuxian/Documents/PhD/Yoshioka/.venv/bin/python benchmarks/15_snap_two_mode/run.py summarize',
       '/home/zuxian/Documents/PhD/Yoshioka/.venv/bin/python -m unittest discover -s tests -v',
       '```',
       '', 'Completed cases are immutable and the runner refuses to overwrite them. For an incomplete case, rerun its exact `propagate --p … --n … --fields … --steps … --dimension …` command under `timeout 600s` using the matching committed numerical source. Resume verifies source/config/bath/field contracts, initial-wave identity and the checkpoint wave checksum. The exact saved 16-step prefix is authoritative; never alter a digest or reuse historical MOD checkpoints. If numerical source changes, start a versioned new experiment/case rather than bypassing the guard.',
       '', '**Historical status preserved:** the complete-pair four-repeat bulk benchmark remains NOT_ACCEPTED, corrected complete-net production count zero. Rejected Born-tail/control-variate results and separate nonlinear-bath, longitudinal-displacement, thermal-stability, linewidth and calibration milestones remain unchanged. No scheduler job was submitted and no remote push was performed.',
       '', 'All work here is local; a code-backed pinned-workflow handover records the final integrated revision and the next bounded step.']
+    adjacent=json.loads((out/'checks/adjacent_support_comparisons.json').read_text())
+    lines+=['','## Adjacent support and final software verification','',
+            '| Comparison | Probability error / tolerance | Common complex exit error | Check |',
+            '|---|---:|---:|---|']
+    for row in adjacent:
+        lines.append(f"| {row['coarse']} → {row['fine']} | {row['max_channel_detector_error_over_tolerance']:.8g} | {row['complex_exit_relative_difference']:.8g} | {'PASS' if row['passed'] else 'FAIL'} |")
+    lines+=['','N65→N97 meets the tested thresholds, narrowly for the complex exit amplitude. This is evidence at fixed F769/S769 and p=2, not a complete certificate for a finer-grid production model. Independent depth and target-cutoff checks at the chosen finer grid remain a future step. The required N33 pilot remains unconverged.',
+            '', 'The p=4 control retains native transitions above the ±180 meV display interval. Their cropped display mass is recorded without renormalization; this does not remove them from the saved native channel table.']
+    test_log=out/'logs/scientific_suite.log'
+    if test_log.exists():
+        import re
+        match=re.search(r'Ran (\d+) tests in ([\d.]+)s',test_log.read_text())
+        if match and re.search(r'^OK\s*$',test_log.read_text(),re.MULTILINE):
+            lines+=['',f"The full scientific suite passed {match[1]} tests in {match[2]} seconds with the existing material dependencies. This establishes the tested software contracts, not physical convergence."]
+    wheel=out/'provenance/installed_wheel_check.json'
+    if wheel.exists():
+        check=json.loads(wheel.read_text())
+        lines+=['',f"The installed wheel was checked from {check['working_directory']}: {check['module_count']} core modules imported with benchmark imports blocked, and {check['source_files_matched_count']} wheel source files matched the checkout. The original scientific environment lacks setuptools; the retained first build failure was resolved using the existing development build environment. Wheel installation used an isolated target under this result directory."]
     (out/'REPORT.md').write_text('\n'.join(lines)+'\n')
     # A self-contained browseable report plus direct links to the actual arrays.
     sections=[];in_table=False;in_code=False

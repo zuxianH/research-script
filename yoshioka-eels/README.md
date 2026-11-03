@@ -97,3 +97,14 @@ source and commands in `PhD/Yoshioka`; the copied package has new source hashes.
 New calculations need a fresh output directory and a new dependency manifest.
 Do not run historical production defaults over saved outputs. Preserve failed
 and unresolved results, resource guards and acceptance thresholds.
+
+## SNAP finite optical pilot
+
+The bounded 10 K Si [110] two-mode pilot has its own model identifier and fresh
+SNAP phonons. See [the runner and guarded commands](benchmarks/15_snap_two_mode/README.md)
+and [the local numerical report](benchmark_results/15_snap_two_mode/si110_snap_T10_p2_v1/REPORT.html).
+It propagates the full nonlinear projected Hamiltonian in six p=2 target states,
+with specimen-normalized x/y Gamma optical modes and explicit thermal weights.
+Its conditional SNAP/TRPMD overlay compares different phonon baths, thicknesses
+and detector acceptances. This pilot does not promote the historical bulk
+benchmark or establish material accuracy; numerical status is in its report.
