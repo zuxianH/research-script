@@ -1,6 +1,6 @@
 # Benchmark scripts
 
-The numbered folders group related work by benchmark. The same group names are used in [scripts](../benchmarks/README.md) and [results](../benchmark_results/README.md).
+The numbered folders group related work by benchmark. The same group names are used for results in `/home/zuxian/Documents/PhD/Yoshioka/benchmark_results`.
 
 | Folder | Contents |
 |---|---|
@@ -18,18 +18,25 @@ The numbered folders group related work by benchmark. The same group names are u
 | [12_approximate_eels](12_approximate_eels/README.md) | Approximate spectra: Affordable approximate EELS |
 | [13_controlled_eels](13_controlled_eels/README.md) | Four model comparisons: controlled model and thickness comparisons |
 | [14_two_phonon_eels](14_two_phonon_eels/README.md) | Two insertion approximation: Leading two phonon EELS |
+| [15_snap_two_mode](15_snap_two_mode/README.md) | SNAP Si [110] 10 K finite optical pilot |
 | [90_workflow](90_workflow/README.md) | Workflow infrastructure: shared workflow and resume tools |
 | [99_reports_and_audits](99_reports_and_audits/README.md) | Project wide evidence: cross benchmark reports and audits |
 
 ## Running benchmarks
 
-Run from the project root with the existing module names and configuration paths. Group folders organize the files; Python imports remain under `benchmarks`.
+Run from `experiments/yoshioka` with the existing module names and configuration paths. Group folders organize the files; Python imports remain under `benchmarks`. The `yoshioka` package comes from the separately installed `yoshioka-eels` distribution.
 
 ```bash
-cd /home/zuxian/Documents/research-script/yoshioka-eels
-OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python -m benchmarks.repair_resume status
-.venv/bin/python -m benchmarks.free_electron --help
+cd experiments/yoshioka
+py=/home/zuxian/Documents/research-script/yoshioka-eels/.venv/bin/python
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 $py -m benchmarks.repair_resume status
+$py -m benchmarks.free_electron --help
 ```
+
+Runners that need ase, hiPhive, phonopy, abTEM or LAMMPS require an interpreter
+with the package's optional `lattice-reference`/`elastic-reference` extras. Pass
+a fresh `--output` directory under `/home/zuxian/Documents/PhD/Yoshioka` for new
+runs; some defaults still name historical `benchmark_results/...` paths.
 
 Configurations are stored inside each group under `configs`. Existing `benchmarks/configs/*.json` paths continue to work. Shared workflow and resume tools are in `90_workflow`.
 
@@ -41,10 +48,10 @@ Original code, configuration, and result contents are preserved. A few files who
 
 Add new work to the appropriate group and preserve the established import and command paths. The move map, verification record, and layout restore utility are in [the organization record](../.organization/20261102_folder_cleanup/).
 
-This package copy is for new development. Original organization records, frozen
+This copy is for new development. Original organization records, frozen
 sources and completed cases remain in `/home/zuxian/Documents/PhD/Yoshioka`.
-Local data links are configured by `scripts/link_research_data.py`; see the
-[package README](../README.md). Original source-hashed resume commands must run
-against the original checkout. Use fresh output directories and manifests for
-new package calculations. Some historical comparisons require external project
-paths; copying a runner does not make its external data portable.
+Original source-hashed resume commands must run against that original checkout.
+Use fresh output directories and manifests for new calculations. Some
+historical comparisons require external project paths; copying a runner does
+not make its external data portable. History before the move is under
+`git log d771b95^ -- yoshioka-eels/benchmarks`.
