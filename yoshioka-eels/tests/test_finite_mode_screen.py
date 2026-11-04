@@ -175,4 +175,26 @@ class ConstructionCheckpointTests(unittest.TestCase):
    array=np.load(target/'total.tmp.npy',mmap_mode='r+');array[0,0,0,0]+=1e-20;array.flush();del array
    with self.assertRaises(ValueError):LongitudinalMaterialAction(bath,2,5,9,17,folder,minimum_free_bytes=0)
 
+
+class NormalOrderTests(unittest.TestCase):
+ def test_exact_sparse_normal_order_against_dense_complex_laguerre(self):
+  from yoshioka.active_modes.normal_order import normal_phase_entries
+  from yoshioka.momentum_material_action import complex_phase_entries
+  from yoshioka.coupled_channels import channel_basis
+  rng=np.random.default_rng(61)
+  for modes in (2,4,6):
+   b=channel_basis(modes,2);xi=(rng.normal(size=(2,len(b),len(b),modes))+1j*rng.normal(size=(2,len(b),len(b),modes)))*.2
+   np.testing.assert_allclose(normal_phase_entries(b,xi),complex_phase_entries(b,xi),rtol=8e-15,atol=4e-16)
+ def test_exact_normal_order_action_against_full_phase_construction(self):
+  from yoshioka.active_modes.normal_order import NormalOrderedMomentumAction
+  from yoshioka.momentum_material_action import MomentumMaterialAction
+  prim=np.diag([5.,4.,6.])*1e-10;cells=np.array(list(np.ndindex(5,5,2)));pos=cells@prim+np.array([.7,1.1,2.])*1e-10
+  cell=prim*np.array([5,5,2])[:,None];z=np.exp(2j*np.pi*cells@np.array([1/5,0,0]))[:,None]*np.array([1.,2.,1.])*1e-12/np.sqrt(50)
+  bath=SimpleNamespace(displacement_m=np.stack((z,z.conj()),axis=-1),omega_rad_s=np.array([8e13,8e13]),inactive_covariance_m2=np.tile(np.eye(3)*.01e-20,(50,1,1)),labels=['q','-q'],cell_m=cell,positions_m=pos)
+  with tempfile.TemporaryDirectory() as folder:
+   old=MomentumMaterialAction(bath,[[1,0,0],[4,0,0]],2,3,9,17,folder,minimum_free_bytes=0)
+   new=NormalOrderedMomentumAction(bath,[[1,0,0],[4,0,0]],2,3,9,17,folder,minimum_free_bytes=0)
+   rng=np.random.default_rng(18);wave=(rng.normal(size=old.shape)+1j*rng.normal(size=old.shape))*old.valid
+   np.testing.assert_allclose(new.apply(wave,4),old.apply(wave,4),rtol=2e-13,atol=2e-33)
+
 if __name__=='__main__':unittest.main()
