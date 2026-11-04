@@ -79,3 +79,60 @@ explicit scattering through all phonon modes.
 Resource preflight includes one fully resident mapped profile during construction
 and conversion, in addition to phase tensors, transfer tiles and FFT buffers.
 Read-only mapped profiles are dropped after construction and each slice read.
+
+## Finite-mode screening and all-direction active modes
+
+`finite_mode_screen.commensurate_bath` constructs both real standing waves and
+complex traveling waves in the force-constant model's cell gauge. The former
+are specimen-normalized real coordinates; the latter label commensurate q and
+branch. Only the three known Gamma translations are removed. A supplied bath
+must be checked against the independent dense finite dynamical matrix.
+
+`finite_mode_screen.born_mode` is an absolute single-contraction Born screen,
+including longitudinal displacements and quantum creation/annihilation factors
+supplied by the caller. Each atomic vertex is
+`V(K) exp[-K C_full K / 2] (-i K.d_mu*)`. The full finite-cell quantum local
+covariance appears once. This is the first contraction of the Gaussian
+correlation function, rather than a cutoff on thermal occupation or frequency.
+It has an infinite-z integral and no elastic multiple scattering. It does not
+predict nonlinear two-phonon probabilities.
+
+`sector_screen.source_profiles` and `distorted_sector` retain elastic scattering
+before and after a single insertion. This focused sector screen currently
+requires five repeats in each lateral direction. The source finite Fourier
+field retains all three displacement directions. Every outgoing sector keeps
+exactly the beams present in the declared full-supercell support. Local Taylor
+order, midpoint depth sampling, and kinetic splitting require controls. A unit
+incident Fourier coefficient represents unit full-cell probability.
+
+`longitudinal_material_action.LongitudinalMaterialAction` forms the full
+nonlinear projected atom interaction at every three-dimensional Fourier K.
+Its infinite-oscillator block uses associated Laguerre polynomials, validated
+against finite oscillator exponentials and independent Hermite quadrature.
+Longitudinal motion shifts the atomic field, not just a transverse phase. Only
+real standing-wave baths are accepted by this action. Its summed C-squared
+field is streamed to disk with checksummed construction checkpoints; the
+propagated Hamiltonian remains Hermitian.
+
+`momentum_material_action.MomentumMaterialAction` supports complex traveling
+modes and the exact joint electron/phonon lateral momentum sector. With an
+initial plane wave and phonon vacuum, channel n carries electron residue
+`r_n = -sum(n_mu h_mu) mod R`. Its Fourier transfer includes
+`(r_out-r_in)/R`, kinetic energies use those shifted physical momenta, and masked
+edge beams preserve the complete declared support. `expand` inserts the
+coefficients without scaling. Complete q partners and translation-invariant
+inactive covariance are required. A portable check rotates the phonon Fock
+basis into real standing modes and compares the entire action with an
+independent full-electron-cell calculation. This reduction differs from an
+electron-only zero sector. Its current runner controls use the vacuum only
+where an explicit omitted thermal probability bound is negligible; that does
+not justify a vacuum assumption for an arbitrary acoustic active set.
+
+For either nonlinear action, the caller subtracts the selected modes' quantum
+covariance from the full bath and applies the remaining local Gaussian average
+once. Local inactive averaging is not explicit correlated inactive dynamics.
+The total occupation cutoff defines the projected space, separately from any
+initial thermal ensemble. For populated initial states, a classification by
+`sum(abs(n_final-n_initial))` differs from final occupation, net energy loss,
+and scattering-event count; callers must state their convention. No screening
+or package test establishes an active-mode cutoff or physical convergence.

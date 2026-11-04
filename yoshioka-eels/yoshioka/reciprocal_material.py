@@ -43,7 +43,7 @@ def transverse_gamma_bath(model,count):
     return displacement,frequencies,inactive,labels[:count]
 
 
-def resolve_material_bath(model,modes=2,bath=None):
+def resolve_material_bath(model,modes=2,bath=None,allow_longitudinal=False):
     """Original Gamma default or an explicit real transverse finite bath."""
     if bath is None:
         displacement,omega,covariance,labels=transverse_gamma_bath(model,modes)
@@ -65,7 +65,7 @@ def resolve_material_bath(model,modes=2,bath=None):
             raise ValueError('optional material bath has inconsistent atom/mode/covariance dimensions')
         if np.any(omega<=0) or not all(np.all(np.isfinite(a)) for a in (displacement,omega,covariance,cell,positions)):
             raise ValueError('optional material bath needs positive frequencies and finite displacements')
-        if np.linalg.norm(displacement[:,2])>1e-10*np.linalg.norm(displacement):
+        if not allow_longitudinal and np.linalg.norm(displacement[:,2])>1e-10*np.linalg.norm(displacement):
             raise ValueError('matrix-free optional material bath supports transverse displacements only; longitudinal phases need a different action')
         if np.linalg.norm(cell-np.diag(np.diag(cell)))>1e-12*np.linalg.norm(cell):
             raise ValueError('matrix-free material action requires an orthorhombic supercell')
