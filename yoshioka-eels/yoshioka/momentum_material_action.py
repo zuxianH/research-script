@@ -104,9 +104,12 @@ class MomentumMaterialAction:
                 Q=2*np.pi*(base[ids,None,None,:]+shift[None]/reps)/(np.diag(cell)[:2])
                 K=np.empty((len(ids),fields,channels,channels,3));K[...,:2]=Q[:,None];K[...,2]=kz[None,:,None,None]
                 kernel=pot.fourier_energy_j_m3(np.sum(K*K,axis=-1));summed=np.zeros(K.shape[:-1],complex)
-                for a in origin:
-                    shifted=positions[a]+[0,0,padding_m-self.dz/2]
-                    value=kernel*np.exp(-.5*np.einsum('...a,ab,...b->...',K,cov[a],K)-1j*(K@shifted))/(cell[0,0]*cell[1,1]*self.length)
+                groups={}
+                for atom in origin:groups.setdefault((self.d[atom].tobytes(),cov[atom].tobytes(),positions[atom,:2].tobytes()),[]).append(atom)
+                for group in groups.values():
+                    a=group[0]
+                    zphase=np.exp(-1j*(positions[group,2,None]+padding_m-self.dz/2)*kz).sum(axis=0)
+                    value=kernel*np.exp(-.5*np.einsum('...a,ab,...b->...',K,cov[a],K)-1j*(K[...,:2]@positions[a,:2]))*zphase[None,:,None,None]/(cell[0,0]*cell[1,1]*self.length)
                     block=complex_phase_entries(self.basis,K@self.d[a])
                     summed+=value*block
                 folded=np.zeros((len(ids),steps,channels,channels),complex)
