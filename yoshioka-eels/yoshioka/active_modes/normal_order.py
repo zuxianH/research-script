@@ -77,14 +77,15 @@ class NormalOrderedMomentumAction(MomentumMaterialAction):
         self.preflight=dict(channels=channels,modes=len(self.omega),n=n,fullN=self.fullN,field_cache_bytes=disk,estimated_peak_rss_bytes=estimate,joint_momentum=True,tile=tile)
         if estimate>maximum_bytes:raise MemoryError(str(self.preflight))
         folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
-        contract=dict(version=1,d=self.d,cov=cov,positions=positions,cell=fullcell,q_indices=q_indices,basis=self.basis,offsets=offsets,n=n,steps=steps,fields=fields,padding=padding_m,code=sha256(__file__),base_code=sha256(Path(__file__).resolve().parents[1]/'momentum_material_action.py'),phase_code=sha256(Path(__file__).resolve().parents[1]/'longitudinal_material_action.py'))
+        pot=LobatoSilicon.from_abtem_table()
+        contract=dict(version=1,lobato_sha256=sha256(pot.source_path),d=self.d,cov=cov,positions=positions,cell=fullcell,q_indices=q_indices,basis=self.basis,offsets=offsets,n=n,steps=steps,fields=fields,padding=padding_m,code=sha256(__file__),base_code=sha256(Path(__file__).resolve().parents[1]/'momentum_material_action.py'),phase_code=sha256(Path(__file__).resolve().parents[1]/'longitudinal_material_action.py'))
         self.field_digest=fingerprint(contract);target=folder/self.field_digest;target.mkdir(exist_ok=True);file=target/'total.npy';manifest=target/'manifest.json'
         current=sum(p.stat().st_size for p in folder.rglob('*.npy'))
         if disk>maximum_disk_bytes or (not file.exists() and not (target/'total.tmp.npy').exists() and current+disk>maximum_disk_bytes) or shutil.disk_usage(folder).free<(0 if file.exists() else disk)+minimum_free_bytes:raise OSError('joint-sector summed cache/disk headroom limit: '+str(self.preflight))
         if limits:limits.check(estimate)
         diff=np.rint(np.fft.fftfreq(pad)*pad).astype(int);dx,dy=np.meshgrid(diff,diff);base=np.column_stack((dx.ravel(),dy.ravel()))
         shift=offsets[:,None,:]-offsets[None,:,:]
-        kz=2*np.pi*np.fft.fftfreq(fields,self.length/fields);freq=np.rint(np.fft.fftfreq(fields)*fields).astype(int);pot=LobatoSilicon.from_abtem_table()
+        kz=2*np.pi*np.fft.fftfreq(fields,self.length/fields);freq=np.rint(np.fft.fftfreq(fields)*fields).astype(int)
         if not manifest.exists():
             tmp=target/'total.tmp.npy';pf=target/'construction.json';progress=json.loads(pf.read_text()) if pf.exists() else dict(digest=self.field_digest,tiles=[])
             if progress['digest']!=self.field_digest:raise ValueError('changed construction contract')

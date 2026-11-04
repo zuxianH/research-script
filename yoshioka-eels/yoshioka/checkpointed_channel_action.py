@@ -8,6 +8,8 @@ def checkpointed_action(hamiltonian,folder,contract,limits,checkpoint_slices=16,
     from .provenance import fingerprint,json_write,sha256
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     h=hamiltonian
+    if hasattr(h,'field_digest'):
+        contract=dict(contract,operator_field_digest=h.field_digest)
     initial=np.zeros(h.shape,complex) if initial_wave is None else np.array(initial_wave,dtype=complex,copy=True)
     if initial_wave is None:initial[0,h.n//2,h.n//2]=1
     if initial.shape!=h.shape or not np.all(np.isfinite(initial)) or abs(np.sum(abs(initial)**2)-1)>1e-12:

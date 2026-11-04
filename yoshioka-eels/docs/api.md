@@ -145,3 +145,9 @@ Gaussian is an algebraic identity. No displacement expansion is made. Independen
 complex Laguerre-block tests and full material-action comparisons validate it.
 It currently retains the same C-squared field storage as the reference action;
 removing that storage needs a further matrix-free lowering/raising action.
+
+Field-cache contracts for both traveling-mode constructions include the source
+Lobato table's SHA-256. `checkpointed_action` also binds the Hamiltonian's
+`field_digest` automatically when available, so an operator change cannot reuse
+a checkpoint merely because the caller supplied unchanged metadata. Older
+executed research versions remain identified by their own frozen source hashes.
