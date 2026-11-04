@@ -136,3 +136,12 @@ initial thermal ensemble. For populated initial states, a classification by
 `sum(abs(n_final-n_initial))` differs from final occupation, net energy loss,
 and scattering-event count; callers must state their convention. No screening
 or package test establishes an active-mode cutoff or physical convergence.
+
+`active_modes.normal_order.NormalOrderedMomentumAction` is an exact p≤2
+construction variant of the joint momentum action. It retains the Gaussian
+`exp[-sum(abs(K.d_mu)**2)/2]` and evaluates the remaining occupation polynomials
+only where occupations are nonzero. Combining that Gaussian with the inactive
+Gaussian is an algebraic identity. No displacement expansion is made. Independent
+complex Laguerre-block tests and full material-action comparisons validate it.
+It currently retains the same C-squared field storage as the reference action;
+removing that storage needs a further matrix-free lowering/raising action.
