@@ -385,6 +385,38 @@ class FullDisplacementAction:
         return expm_multiply(operator, wave.ravel(), traceA=factor * trace).reshape(self.shape)
 
 
+def save_exit_probabilities(path, waves, **metadata):
+    """Save unweighted momentum probabilities; preserve float64 precision."""
+    probability = np.abs(waves).astype(np.float64, copy=False)
+    np.square(probability, out=probability)
+    temporary = path.with_name(path.stem + '.tmp.npz')
+    np.savez_compressed(temporary, exit_probabilities=probability, **metadata)
+    temporary.replace(path)
+
+
+def prune_completed_checkpoints(folder, initial_indices, probability_file):
+    """Remove only verified completed waves after the final probability save."""
+    if not probability_file.is_file():
+        raise FileNotFoundError('final probability output must exist before checkpoint cleanup')
+    completed = []
+    for initial_index in initial_indices:
+        state_path = folder / f'initial_{initial_index}.json'
+        state = json.loads(state_path.read_text())
+        expected = f'initial_{initial_index}_slice_{state["total_slices"]}.npy'
+        if state['completed_slices'] != state['total_slices'] or state['wave_file'] != expected:
+            raise ValueError('cleanup requires this initial state\'s completed checkpoint')
+        wave_path = folder / expected
+        if sha256(wave_path) != state['wave_sha256']:
+            raise ValueError('completed checkpoint checksum mismatch; preserving wave')
+        completed.append((state_path, state, wave_path))
+    # Validate every record before removing any completed wave.
+    for state_path, state, wave_path in completed:
+        wave_path.unlink()
+        state.update(wave_file=None, wave_sha256=None, wave_retained=False,
+                     final_probability_file='../' + probability_file.name)
+        json_write(state_path, state)
+
+
 def run(out, cfg):
     with np.load(out / 'phonons/bath.npz') as data:
         bath = {k: data[k] for k in ('positions_m', 'cell_m', 'displacements_m', 'omega_rad_s')}
@@ -443,9 +475,12 @@ def run(out, cfg):
     lines = transition_lines(np.array(waves), initial_indices, h.basis, constants.hbar * bath['omega_rad_s'], weights[initial_indices], masks)
     axis = np.linspace(-180, 180, 7201)
     spectra = broaden_transition_lines(lines, axis, cfg['fwhm_mev'])
-    np.savez_compressed(out / 'exit.npz', exit_coefficients=waves, initial_indices=initial_indices,
-                        basis=h.basis, qxy_m_inv=h.qxy, angles_mrad=angle, thermal_weights=weights,
-                        omitted_initial_probability=omitted, mode_quanta_j=constants.hbar*bath['omega_rad_s'])
+    probability_file = out / 'exit_probabilities.npz'
+    save_exit_probabilities(probability_file, waves, initial_indices=initial_indices,
+        basis=h.basis, qxy_m_inv=h.qxy, angles_mrad=angle, detector_masks=masks,
+        detector_bounds_mrad=np.array([[0., 30.]]), thermal_weights=weights,
+        executed_initial_weights=weights[initial_indices], omitted_initial_probability=omitted,
+        mode_quanta_j=constants.hbar*bath['omega_rad_s'])
     np.savez_compressed(out / 'spectra.npz', **lines, **spectra)
     np.savetxt(out / 'spectrum.csv', np.column_stack((axis, spectra['inclusive_per_mev'][0],
                spectra['changed_per_mev'][0], spectra['returning_per_mev'][0])), delimiter=',',
@@ -469,9 +504,11 @@ def run(out, cfg):
                changed_state_probability=(lines['probability'] * (~lines['returning_state'])[:, :, None]).sum(),
                peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                child_peak_rss_kib=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
+               exit_output_file=probability_file.name, exit_output_representation='unweighted |A|^2, float64',
                source_sha256=sha256(Path(__file__)), configuration_digest=fingerprint(cfg),
                validation_scope='Requested finite discretization only; no independent convergence certificate'))
-    log('COMPLETE: spectra, absolute channel probabilities, exit waves, and PNG saved')
+    prune_completed_checkpoints(checkpoint, initial_indices, probability_file)
+    log('COMPLETE: spectra, momentum probabilities, and PNG saved; temporary complex checkpoints removed')
 
 
 def benchmark(out, cfg):

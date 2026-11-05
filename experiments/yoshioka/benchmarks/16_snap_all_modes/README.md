@@ -26,6 +26,21 @@ slice separately for each appreciably populated thermal initial state. Thermal
 weights retain their absolute normalization; omitted initial mass is bounded.
 Reported detector probabilities have no detector-specific renormalization.
 
+Future final wave output is `exit_probabilities.npz`: `exit_probabilities` is a
+float64 array of unweighted |A|² with axes (initial state, final phonon channel,
+ky, kx). It retains channel occupations, initial-state indices, momentum/angle
+coordinates, detector masks/bounds, mode energies, full thermal weights and
+the executed initial-state weights. Apply thermal weights once when forming
+spectra. Float64 probabilities use half the uncompressed bytes of complex128
+amplitudes; the compressed size depends on the data.
+
+Propagation and unfinished restart checkpoints remain complex. After all final
+outputs and the completion record are saved, verified completed checkpoint waves
+are removed and their JSON records point to the final probability file. Existing
+completed runs and their frozen sources remain unchanged. The probability save
+supports momentum probabilities and EELS; phase-dependent reanalysis requires
+complex amplitudes and must be explicitly requested for a future run.
+
 Field construction uses deterministic four-transfer tiles. One parent process
 assembles and verifies independent chunk files produced by 1, 2, or 4 worker
 processes; each process uses one BLAS thread. Completed tiles have checksums

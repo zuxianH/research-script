@@ -1,5 +1,6 @@
 """Independent full-3D dense checks for the external scientific runner."""
 from copy import deepcopy
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,8 +11,11 @@ import numpy as np
 from scipy import constants
 from scipy.linalg import expm
 
-from run import FullDisplacementAction, preparation_contract
+from run import (FullDisplacementAction, preparation_contract,
+                 prune_completed_checkpoints, save_exit_probabilities)
+from yoshioka.channel_spectra import broaden_transition_lines, transition_lines
 from yoshioka.leading_reference import DenseDisplacedMaterial
+from yoshioka.provenance import sha256
 
 
 class FullDisplacementTests(unittest.TestCase):
@@ -194,6 +198,125 @@ class PreparationContractTests(unittest.TestCase):
                 changed = deepcopy(cfg)
                 changed['input_sha256'][name] = 'changed-digest'
                 self.assertNotEqual(contract, preparation_contract(changed))
+
+
+class ProbabilityOutputTests(unittest.TestCase):
+    def test_saved_probabilities_reproduce_thermal_detector_spectra(self):
+        rng = np.random.default_rng(60291)
+        basis = np.array([[0, 0], [1, 0], [0, 1], [2, 0], [1, 1], [0, 2]])
+        initial_indices = np.array([0, 2])
+        waves = rng.normal(size=(2, len(basis), 3, 3)) + 1j * rng.normal(size=(2, len(basis), 3, 3))
+        waves /= np.linalg.norm(waves.reshape(2, -1), axis=1)[:, None, None, None]
+        mode_quanta_j = np.array([20., 35.]) * 1e-3 * constants.e
+        thermal_weights = np.array([.6, .12, .2, .03, .03, .01])
+        detector_masks = np.array([np.ones((3, 3), dtype=bool),
+                                   [[False, True, False], [True, True, True], [False, True, False]]])
+        metadata = dict(initial_indices=initial_indices, basis=basis,
+                        mode_quanta_j=mode_quanta_j, detector_masks=detector_masks,
+                        thermal_weights=thermal_weights,
+                        executed_initial_weights=thermal_weights[initial_indices])
+        expected_lines = transition_lines(waves, initial_indices, basis, mode_quanta_j,
+                                          thermal_weights[initial_indices], detector_masks)
+        axis = np.linspace(-180., 180., 7201)
+        expected_spectra = broaden_transition_lines(expected_lines, axis, 2.)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'exit_probabilities.npz'
+            save_exit_probabilities(path, waves, **metadata)
+            with np.load(path, allow_pickle=False) as saved:
+                self.assertEqual(set(saved.files), {'exit_probabilities', *metadata})
+                probability = saved['exit_probabilities']
+                self.assertEqual(probability.dtype, np.dtype('float64'))
+                self.assertEqual(probability.shape, waves.shape)
+                self.assertEqual(probability.nbytes * 2, waves.nbytes)
+                self.assertTrue(np.isfinite(probability).all())
+                self.assertTrue((probability >= 0).all())
+                np.testing.assert_array_equal(probability, abs(waves)**2)
+                np.testing.assert_allclose(probability.sum(axis=(1, 2, 3)), 1., rtol=0., atol=5e-16)
+                for name, value in metadata.items():
+                    np.testing.assert_array_equal(saved[name], value)
+                self.assertFalse(any(np.iscomplexobj(saved[name]) for name in saved.files))
+                detector_probability = np.einsum('ifyx,dyx->ifd', probability,
+                                                  saved['detector_masks']) * saved['executed_initial_weights'][:, None, None]
+                np.testing.assert_allclose(detector_probability, expected_lines['probability'], rtol=1e-15, atol=0.)
+                # The full detector preserves each unnormalized thermal weight;
+                # a second thermal multiplication would fail this check.
+                np.testing.assert_allclose(detector_probability[:, :, 0].sum(axis=1),
+                                           saved['thermal_weights'][saved['initial_indices']], rtol=1e-15, atol=0.)
+                energy_mev = saved['basis'] @ saved['mode_quanta_j'] / (1e-3 * constants.e)
+                lines = dict(probability=detector_probability,
+                             energy_loss_mev=energy_mev[None, :] - energy_mev[saved['initial_indices'], None],
+                             returning_state=saved['initial_indices'][:, None] == np.arange(len(saved['basis']))[None, :])
+                np.testing.assert_array_equal(lines['energy_loss_mev'], expected_lines['energy_loss_mev'])
+                np.testing.assert_array_equal(lines['returning_state'], expected_lines['returning_state'])
+                self.assertTrue(lines['returning_state'].any())
+                self.assertTrue((~lines['returning_state']).any())
+                spectra = broaden_transition_lines(lines, axis, 2.)
+                for name in ('components_per_mev', 'inclusive_per_mev', 'changed_per_mev', 'returning_per_mev'):
+                    np.testing.assert_allclose(spectra[name], expected_spectra[name], rtol=1e-15, atol=0.)
+
+    def checkpoint(self, folder, index=2, **overrides):
+        name = f'initial_{index}_slice_3.npy'
+        wave_path = folder / name
+        np.save(wave_path, np.array([1.+2.j]))
+        state = dict(contract='unchanged-contract', completed_slices=3, total_slices=3,
+                     wave_file=name, wave_sha256=sha256(wave_path), max_norm_drift=1e-15)
+        state.update(overrides)
+        state_path = folder / f'initial_{index}.json'
+        state_path.write_text(json.dumps(state))
+        return wave_path, state_path, state
+
+    def test_cleanup_retains_metadata_and_removes_only_completed_owned_wave(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            folder = output / 'checkpoints'
+            folder.mkdir()
+            probability_file = output / 'exit_probabilities.npz'
+            np.savez_compressed(probability_file, exit_probabilities=np.array([1.]))
+            wave_path, state_path, before = self.checkpoint(folder)
+            unrelated = folder / 'unrelated.npy'
+            np.save(unrelated, np.array([3.+4.j]))
+            prune_completed_checkpoints(folder, [2], probability_file)
+            self.assertFalse(wave_path.exists())
+            self.assertTrue(unrelated.exists())
+            after = json.loads(state_path.read_text())
+            for name in ('contract', 'completed_slices', 'total_slices', 'max_norm_drift'):
+                self.assertEqual(after[name], before[name])
+            self.assertIsNone(after['wave_file'])
+            self.assertIsNone(after['wave_sha256'])
+            self.assertFalse(after['wave_retained'])
+            self.assertEqual(after['final_probability_file'], '../exit_probabilities.npz')
+
+    def test_cleanup_rejects_invalid_checkpoints_before_removing_any_wave(self):
+        cases = dict(incomplete=dict(completed_slices=2),
+                     corrupt=dict(wave_sha256='incorrect-digest'),
+                     foreign_name=dict(wave_file='../foreign.npy'))
+        for case, overrides in cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary)
+                folder = output / 'checkpoints'
+                folder.mkdir()
+                probability_file = output / 'exit_probabilities.npz'
+                np.savez_compressed(probability_file, exit_probabilities=np.array([1.]))
+                first_wave, first_state, _ = self.checkpoint(folder, index=0)
+                wave_path, state_path, _ = self.checkpoint(folder, **overrides)
+                foreign_path = output / 'foreign.npy'
+                np.save(foreign_path, np.array([5.+6.j]))
+                before = {path: path.read_bytes() for path in (first_wave, first_state, wave_path, state_path, foreign_path)}
+                with self.assertRaises((ValueError, FileNotFoundError)):
+                    prune_completed_checkpoints(folder, [0, 2], probability_file)
+                for path, content in before.items():
+                    self.assertEqual(path.read_bytes(), content)
+
+    def test_cleanup_requires_saved_probabilities_before_removing_wave(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary) / 'checkpoints'
+            folder.mkdir()
+            wave_path, state_path, _ = self.checkpoint(folder)
+            before = state_path.read_bytes()
+            with self.assertRaises((ValueError, FileNotFoundError)):
+                prune_completed_checkpoints(folder, [2], folder.parent / 'exit_probabilities.npz')
+            self.assertTrue(wave_path.exists())
+            self.assertEqual(state_path.read_bytes(), before)
 
 
 if __name__ == '__main__':
