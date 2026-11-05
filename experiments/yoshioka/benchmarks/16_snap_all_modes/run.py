@@ -6,7 +6,9 @@ potential matrix element uses the requested working-Fock exponential before
 projection into the total-occupation basis; longitudinal phases are retained.
 """
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
+import multiprocessing
 from pathlib import Path
 import resource
 import time
@@ -30,6 +32,36 @@ def log(message):
     print(time.strftime('%Y-%m-%d %H:%M:%S'), message, flush=True)
 
 
+def preparation_contract(cfg):
+    """Static force fit and finite bath identity, independent of electron grids."""
+    keys = ('system', 'specimen_repetitions', 'mass_u', 'fit_supercell',
+            'harmonic_cutoff_angstrom', 'fit_sigma_angstrom', 'training_pairs',
+            'validation_pairs', 'fit_seed', 'input_sha256')
+    return dict(geometry='static zero-pressure orthorhombic SNAP; uniform isotope mass',
+                settings={key: cfg[key] for key in keys})
+
+
+def calculation_settings(cfg):
+    execution_keys = {'field_workers', 'resource_request', 'maximum_rss_bytes', 'maximum_seconds'}
+    return {k: v for k, v in cfg.items() if k not in execution_keys}
+
+
+def validate_preparation(out, cfg):
+    folder = out / 'phonons'
+    record = json.loads((folder / 'preparation.json').read_text())
+    saved = json.loads((folder / 'contract.json').read_text())
+    if not record['passed'] or saved['phonon_contract'] != preparation_contract(cfg):
+        raise ValueError('validated phonon inputs/settings do not match this calculation')
+    for name, digest in saved['files'].items():
+        if sha256(folder / name) != digest:
+            raise ValueError('validated phonon artifact changed: ' + name)
+    for name, digest in cfg['input_sha256'].items():
+        file = out / ('inputs' if name.endswith('.lmp') else 'models') / name
+        if sha256(file) != digest:
+            raise ValueError('supplied material input changed: ' + name)
+    return record
+
+
 def prepare(out, cfg):
     """Fit harmonic SNAP forces in hiPhive, retaining independent validation."""
     from ase.io import read, write
@@ -41,9 +73,7 @@ def prepare(out, cfg):
     folder = out / 'phonons'
     folder.mkdir(exist_ok=True)
     if (folder / 'preparation.json').exists():
-        saved = json.loads((folder / 'preparation.json').read_text())
-        if saved['config_digest'] != fingerprint(cfg) or not saved['passed']:
-            raise ValueError('existing preparation has a different configuration or failed')
+        validate_preparation(out, cfg)
         log('Using completed phonon preparation')
         return
     unit = read(out / 'inputs/Si_110_temp300.lmp', format='lammps-data', atom_style='atomic')
@@ -135,7 +165,69 @@ def prepare(out, cfg):
     json_write(folder / 'preparation.json', record)
     if not record['passed']:
         raise ValueError('SNAP/hiPhive independent validation failed; inspect preparation.json')
+    json_write(folder / 'contract.json', dict(phonon_contract=preparation_contract(cfg),
+        files={p.name: sha256(p) for p in folder.iterdir() if p.is_file()}))
     log(f'Phonons validated: 9 internal modes; fit frequency error {fit_energy_error:.6g} meV')
+
+
+_FIELD_CONTEXT = None
+
+
+def initialize_field_worker(context):
+    """One copy of the small bath/grids per process; no nested BLAS threads."""
+    global _FIELD_CONTEXT
+    from threadpoolctl import threadpool_limits
+    _FIELD_CONTEXT = dict(context, potential=LobatoSilicon.from_abtem_table(),
+                          thread_limit=threadpool_limits(limits=1))
+
+
+def build_field_tile(task):
+    """Write one deterministic canonical tile, never the shared complete field."""
+    context = _FIELD_CONTEXT
+    selected, path = task
+    path = Path(path)
+    record_path = path.with_suffix('.json')
+    identity = dict(field_digest=context['digest'], indices=selected.tolist())
+    if record_path.exists():
+        record = json.loads(record_path.read_text())
+        if record['identity'] != identity or record['sha256'] != sha256(path):
+            raise ValueError('field tile identity/content mismatch: ' + str(path))
+        return record
+    if path.exists() or path.with_suffix('.tmp.npy').exists():
+        raise FileExistsError('uncommitted tile exists; preserve and inspect: ' + str(path))
+    started = time.monotonic()
+    bath, cfg, basis = context['bath'], context['cfg'], context['basis']
+    Q, kz = context['Q'][selected], context['kz']
+    steps, fields = cfg['steps'], cfg['field_points']
+    cell, length, dz = bath['cell_m'], context['length'], context['dz']
+    wavevectors = np.empty((len(selected), fields, 3))
+    wavevectors[:, :, :2], wavevectors[:, :, 2] = Q[:, None, :], kz
+    kernel = context['potential'].fourier_energy_j_m3(np.sum(wavevectors**2, axis=-1)) / np.prod(np.diag(cell)[:2]) / length
+    folded = np.zeros((len(selected), steps, len(basis), len(basis)), complex)
+    for atom, pos in enumerate(bath['positions_m']):
+        xi = wavevectors @ bath['displacements_m'][atom]
+        blocks = phase_blocks(basis, xi.reshape(-1, xi.shape[-1]), cfg['working_dimension'])
+        blocks = blocks.reshape(len(selected), fields, len(basis), len(basis))
+        coefficient = kernel * np.exp(-1j*(Q @ pos[:2])[:, None] - 1j*kz*(pos[2] + cfg['padding_m'] - dz/2))
+        blocks *= coefficient[:, :, None, None]
+        for s in range(steps):
+            folded[:, s] += blocks[:, context['frequencies'] % steps == s].sum(axis=1)
+    values = np.fft.ifft(folded, axis=1) * steps
+    if selected[0] == 0:
+        residual = np.linalg.norm(values[0].imag) / max(np.linalg.norm(values[0].real), np.finfo(float).tiny)
+        if residual > 1e-11:
+            raise ValueError(f'zero-transfer field is not real: {residual}')
+        values[0] = values[0].real
+    if not np.all(np.isfinite(values)):
+        raise ValueError('non-finite interaction field tile')
+    temporary = path.with_suffix('.tmp.npy')
+    np.save(temporary, values.swapaxes(0, 1))
+    temporary.replace(path)
+    record = dict(identity=identity, file=path.name, sha256=sha256(path),
+                  seconds=time.monotonic()-started,
+                  worker_peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    json_write(record_path, record)
+    return record
 
 
 class FullDisplacementAction:
@@ -157,8 +249,12 @@ class FullDisplacementAction:
             raise ValueError('working oscillator dimension must exceed the occupation cutoff')
         self.shape = (self.c, self.n, self.n)
         self.pad = 2 * self.n - 1
+        workers = cfg.get('field_workers', 1)
+        if not isinstance(workers, int) or workers < 1:
+            raise ValueError('field_workers must be a positive integer')
         # Include simultaneous Fourier/FFT/local field copies and work vectors.
         estimated_rss = 5 * self.pad**2 * self.c**2 * 16 + 64 * self.c * self.pad**2 * 16 + 2 * 1024**3
+        estimated_rss += workers * (3 * tile * fields * self.c**2 * 16 + 256 * 1024**2)
         if estimated_rss > cfg.get('maximum_rss_bytes', 64 * 1024**3):
             raise MemoryError(f'conservative local-field estimate {estimated_rss} exceeds configured budget')
         cell = bath['cell_m']
@@ -182,7 +278,8 @@ class FullDisplacementAction:
         canonical = np.flatnonzero(np.arange(len(Q)) <= opposite)
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
-        contract = dict(config=cfg, bath={k: np.asarray(v).tolist() for k, v in bath.items()},
+        contract = dict(config=calculation_settings(cfg),
+                        bath={k: np.asarray(v).tolist() for k, v in bath.items()},
                         source_sha256=sha256(Path(__file__)))
         contract_digest = fingerprint(contract)
         manifest = folder / 'manifest.json'
@@ -194,42 +291,49 @@ class FullDisplacementAction:
         else:
             if path.exists():
                 raise FileExistsError('uncommitted field cache exists; preserve and inspect before restarting')
-            field = np.lib.format.open_memmap(path, mode='w+', dtype=complex,
-                                            shape=(self.steps, len(Q), self.c, self.c))
-            potential = LobatoSilicon.from_abtem_table()
-            for lo in range(0, len(canonical), tile):
-                selected = canonical[lo:lo + tile]
-                wavevectors = np.empty((len(selected), fields, 3))
-                wavevectors[:, :, :2] = Q[selected, None, :]
-                wavevectors[:, :, 2] = kz
-                kernel = potential.fourier_energy_j_m3(np.sum(wavevectors**2, axis=-1)) / np.prod(np.diag(cell)[:2]) / self.length
-                folded = np.zeros((len(selected), self.steps, self.c, self.c), complex)
-                for atom, pos in enumerate(bath['positions_m']):
-                    xi = wavevectors @ bath['displacements_m'][atom]
-                    blocks = phase_blocks(self.basis, xi.reshape(-1, xi.shape[-1]), dimension)
-                    blocks = blocks.reshape(len(selected), fields, self.c, self.c)
-                    coefficient = kernel * np.exp(-1j * (Q[selected] @ pos[:2])[:, None]
-                                                -1j * kz * (pos[2] + cfg['padding_m'] - self.dz/2))
-                    blocks *= coefficient[:, :, None, None]
-                    for s in range(self.steps):
-                        folded[:, s] += blocks[:, frequencies % self.steps == s].sum(axis=1)
-                values = np.fft.ifft(folded, axis=1) * self.steps
-                if selected[0] == 0:
-                    residual = np.linalg.norm(values[0].imag) / max(np.linalg.norm(values[0].real), np.finfo(float).tiny)
-                    if residual > 1e-11:
-                        raise ValueError(f'zero-transfer field is not real: {residual}')
-                    values[0] = values[0].real
-                field[:, selected] = values.swapaxes(0, 1)
-                field[:, opposite[selected]] = values.conj().swapaxes(0, 1)
-                if lo % (tile * 100) == 0:
-                    field.flush()
-                    import mmap
-                    field._mmap.madvise(mmap.MADV_DONTNEED)
-                    log(f'Full 3D channel fields: {lo}/{len(canonical)} transfers')
+            chunks = folder / 'chunks'
+            chunks.mkdir(exist_ok=True)
+            context = dict(bath=bath, cfg=cfg, basis=self.basis, Q=Q, kz=kz,
+                           frequencies=frequencies, length=self.length, dz=self.dz, digest=contract_digest)
+            tasks = [(canonical[lo:lo+tile], str(chunks/f'tile_{lo:06d}.npy'))
+                     for lo in range(0, len(canonical), tile)]
+            log(f'Building {len(canonical)} canonical transfers in {len(tasks)} tiles with {workers} worker(s)')
+            if workers == 1:
+                initialize_field_worker(context)
+                records = [build_field_tile(task) for task in tasks]
+            else:
+                with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context('spawn'),
+                                         initializer=initialize_field_worker, initargs=(context,)) as pool:
+                    futures = [pool.submit(build_field_tile, task) for task in tasks]
+                    records = []
+                    for future in as_completed(futures):
+                        records.append(future.result())
+                        if len(records) % 10 == 0 or len(records) == len(tasks):
+                            log(f'Channel field tiles: {len(records)}/{len(tasks)} complete')
+            covered = sorted(i for record in records for i in record['identity']['indices'])
+            if covered != canonical.tolist():
+                raise ValueError('field tiles do not cover canonical transfers exactly once')
+            temporary = folder / 'channel_fields.tmp.npy'
+            if temporary.exists():
+                raise FileExistsError('uncommitted assembled field exists; preserve and inspect')
+            field = np.lib.format.open_memmap(temporary, mode='w+', dtype=complex,
+                                             shape=(self.steps, len(Q), self.c, self.c))
+            for record in records:
+                selected = np.array(record['identity']['indices'])
+                file = chunks / record['file']
+                if sha256(file) != record['sha256']:
+                    raise ValueError('completed tile checksum changed')
+                values = np.load(file, allow_pickle=False)
+                if values.shape != (self.steps, len(selected), self.c, self.c) or values.dtype != np.complex128 or not np.all(np.isfinite(values)):
+                    raise ValueError('invalid completed field tile')
+                field[:, selected] = values
+                field[:, opposite[selected]] = values.conj()
             field.flush()
             del field
+            temporary.replace(path)
             json_write(manifest, dict(digest=contract_digest, sha256=sha256(path),
-                                     channel_count=self.c, full_cartesian_displacements=True))
+                                     channel_count=self.c, full_cartesian_displacements=True,
+                                     workers=workers, chunks=records, estimated_peak_rss_bytes=estimated_rss))
         self.fields = np.load(path, mmap_mode='r')
         self.cached_index, self.potential = None, None
 
@@ -305,7 +409,7 @@ def run(out, cfg):
         wave[initial_index, h.n//2, h.n//2] = 1
         completed, drift = 0, 0.
         state_path = checkpoint / f'initial_{initial_index}.json'
-        contract = fingerprint(dict(config=cfg, source=sha256(Path(__file__)),
+        contract = fingerprint(dict(config=calculation_settings(cfg), source=sha256(Path(__file__)),
                                     bath=sha256(out / 'phonons/bath.npz'), initial=int(initial_index)))
         if state_path.exists():
             state = json.loads(state_path.read_text())
@@ -364,14 +468,66 @@ def run(out, cfg):
                omitted_initial_probability_bound=omitted, detector_probability=lines['probability'].sum(),
                changed_state_probability=(lines['probability'] * (~lines['returning_state'])[:, :, None]).sum(),
                peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+               child_peak_rss_kib=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
                source_sha256=sha256(Path(__file__)), configuration_digest=fingerprint(cfg),
                validation_scope='Requested finite discretization only; no independent convergence certificate'))
     log('COMPLETE: spectra, absolute channel probabilities, exit waves, and PNG saved')
 
 
+def benchmark(out, cfg):
+    """Measure 1/2/4 processes on the actual field workload, then retain the best."""
+    with np.load(out / 'phonons/bath.npz') as data:
+        bath = {k: data[k] for k in ('positions_m', 'cell_m', 'displacements_m', 'omega_rad_s')}
+    identity = dict(config_digest=fingerprint(calculation_settings(cfg)), source_sha256=sha256(Path(__file__)),
+                    bath_sha256=sha256(out / 'phonons/bath.npz'))
+    if (out / 'benchmark.json').exists():
+        saved = json.loads((out / 'benchmark.json').read_text())
+        if saved['identity'] != identity:
+            raise ValueError('saved benchmark has different source, bath, or numerical settings')
+        best = saved['selected_workers']
+        if not (out / 'fields').exists():
+            (out / 'benchmark' / f'workers_{best}').rename(out / 'fields')
+        return dict(cfg, field_workers=best)
+    reference, timings = None, []
+    for workers in (1, 2, 4):
+        folder = out / 'benchmark' / f'workers_{workers}'
+        saved_timing = folder / 'timing.json'
+        if folder.exists() and not saved_timing.exists():
+            raise FileExistsError('partial benchmark has no comparable full-build timing; preserve it before a fresh measurement')
+        settings = dict(cfg, field_workers=workers)
+        started = time.monotonic()
+        h = FullDisplacementAction(bath, settings, folder)
+        elapsed = time.monotonic() - started
+        if saved_timing.exists():
+            timing = json.loads(saved_timing.read_text())
+            if timing['identity'] != identity:
+                raise ValueError('saved field timing has different numerical inputs')
+            elapsed = timing['seconds']
+        else:
+            json_write(saved_timing, dict(identity=identity, seconds=elapsed))
+        if reference is None:
+            reference = np.array(h.fields)
+        difference = np.linalg.norm(np.asarray(h.fields) - reference) / np.linalg.norm(reference)
+        if not np.isfinite(difference) or difference > 1e-13:
+            raise ValueError('parallel field benchmark disagrees with serial fields')
+        for s in range(h.steps):
+            h.set_slice(s)
+        timings.append(dict(workers=workers, seconds=elapsed, relative_field_error=float(difference)))
+        del h
+        log(f'Field benchmark: {workers} worker(s), {elapsed:.3f} seconds, relative error {difference:.3g}')
+    best = min(timings, key=lambda item: item['seconds'])['workers']
+    if (out / 'fields').exists():
+        raise FileExistsError('existing run field directory must be preserved before selection')
+    json_write(out / 'benchmark.json', dict(identity=identity, timings=timings, selected_workers=best,
+        speedup_vs_serial=timings[0]['seconds'] / min(item['seconds'] for item in timings),
+        note='Elapsed times include process startup, tile writes, assembly, and hashing; all workers use one BLAS thread'))
+    (out / 'benchmark' / f'workers_{best}').rename(out / 'fields')
+    return dict(cfg, field_workers=best)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('stage', choices=('prepare', 'run'))
+    parser.add_argument('stage', choices=('prepare', 'run', 'benchmark-and-run'))
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     cfg = json.loads((args.output / 'inputs/config.json').read_text())
@@ -380,9 +536,11 @@ def main():
     if args.stage == 'prepare':
         prepare(args.output, cfg)
     else:
-        preparation = json.loads((args.output / 'phonons/preparation.json').read_text())
-        if not preparation['passed'] or preparation['config_digest'] != fingerprint(cfg):
-            raise ValueError('validated matching hiPhive preparation is required')
+        validate_preparation(args.output, cfg)
+        if args.stage == 'benchmark-and-run':
+            cfg = benchmark(args.output, cfg)
+        elif (args.output / 'benchmark.json').exists():
+            cfg = dict(cfg, field_workers=json.loads((args.output / 'benchmark.json').read_text())['selected_workers'])
         run(args.output, cfg)
 
 
