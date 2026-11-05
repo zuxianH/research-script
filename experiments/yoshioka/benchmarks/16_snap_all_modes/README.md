@@ -6,10 +6,16 @@ occupation basis. The working single-oscillator exponential is evaluated with
 the configured `working_dimension` before projection. Active longitudinal
 displacements are retained. This differs from the transverse-only fast action.
 
-The current run uses the four-atom 1×1×1 cell, 10 K, 60 keV plane wave, all nine
-internal modes, p=2 (55 channels), N=11, M=21, 193 depth-field points, 11
-propagation slices, D=32, and a 0–30 mrad detector. The cancelled N=97/F=769
-run is preserved separately. The three rigid translations are removed.
+The current run uses 2×2×2 four-atom Si cells: 32 atoms, 10 K, a 60 keV plane
+wave, all 93 internal modes, p=1 (94 channels), N=50, M=99, 193 depth-field
+points, 21 propagation slices, D=32, and a 0–30 mrad detector. The three rigid
+translations are removed. Prior 1×1×1 results remain immutable.
+
+The even N=50 grid retains signed beams −25…24 on the full doubled transverse
+specimen cell, with zero incident momentum at array index 25. All 93 active
+modes include finite-cell non-Gamma modes; no electron-only primitive-cell
+symmetry reduction is applied. The odd M=99 padded mesh represents every beam
+difference −49…49 without cyclic aliasing.
 
 The 9.85 Å harmonic cutoff covers twice the supplied 4.9 Å SNAP neighbor cutoff.
 A 4×6×6 force-training cell separates harmonic images. Eight independent paired
@@ -47,6 +53,21 @@ processes; each process uses one BLAS thread. Completed tiles have checksums
 and can be reused after interrupted construction. The parent fills conjugate
 partners only after checking exact canonical coverage. Propagation slices stay
 sequential; processes do not split the coupled wave into independent channels.
+
+For the full-node run, field construction uses up to 256 independent processes.
+The p=1 builder factors the product of the exact D-dimensional single-mode
+phase blocks into vacuum, vacuum/single, and single/single matrix elements,
+avoiding repeated multiplication of a full channel matrix for every mode.
+Near-zero vacuum denominators fall back to the generic exact product.
+
+The 31 appreciably populated thermal initial states propagate in separate
+processes. Each uses eight threads for spatial blocks of the same coupled
+Hamiltonian action, with a single FFT thread to avoid excessive nested thread
+counts. Optional threaded FFTs are independently supported and tested. The
+31×8 active contraction threads fit within a 256-core allocation. Every state's
+21 slices remain sequential. Completed fields are checksummed once by the
+coordinator; child reuse requires the same digest, checksum and filesystem
+identity. Checkpoints bind both runner and parallel-propagation source hashes.
 
 Independent checks compare the nine-mode action with the existing dense
 working-Fock reference, compare longitudinal field folding at independent

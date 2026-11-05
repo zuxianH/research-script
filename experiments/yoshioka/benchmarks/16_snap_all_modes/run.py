@@ -6,15 +6,18 @@ potential matrix element uses the requested working-Fock exponential before
 projection into the total-occupation basis; longitudinal phases are retained.
 """
 import argparse
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import json
 import multiprocessing
 from pathlib import Path
 import resource
+import shutil
 import time
 
 import numpy as np
 from scipy import constants
+from scipy import fft as threaded_fft
+from scipy.linalg import eigh_tridiagonal
 from scipy.linalg import null_space
 from scipy.sparse.linalg import LinearOperator, expm_multiply
 
@@ -42,7 +45,8 @@ def preparation_contract(cfg):
 
 
 def calculation_settings(cfg):
-    execution_keys = {'field_workers', 'resource_request', 'maximum_rss_bytes', 'maximum_seconds'}
+    execution_keys = {'field_workers', 'propagation_workers', 'hamiltonian_threads', 'fft_threads',
+                      'resource_request', 'maximum_rss_bytes', 'maximum_seconds'}
     return {k: v for k, v in cfg.items() if k not in execution_keys}
 
 
@@ -62,6 +66,41 @@ def validate_preparation(out, cfg):
     return record
 
 
+def reuse_force_constants(out, cfg, previous):
+    """Reuse the validated bulk fit, constructing the requested finite bath anew."""
+    from yoshioka.lattice_dynamics import RealSpaceForceConstants, finite_periodic_modes
+    previous = Path(previous)
+    old_cfg = json.loads((previous / 'inputs/config.json').read_text())
+    old_record = validate_preparation(previous, old_cfg)
+    old_fit, new_fit = preparation_contract(old_cfg), preparation_contract(cfg)
+    old_fit['settings'].pop('specimen_repetitions')
+    new_fit['settings'].pop('specimen_repetitions')
+    if old_fit != new_fit:
+        raise ValueError('force-fit settings or material inputs differ from the validated source')
+    folder = out / 'phonons'
+    folder.mkdir(exist_ok=True)
+    for source in (previous / 'phonons').iterdir():
+        if source.is_file() and source.name not in {'bath.npz', 'preparation.json', 'contract.json'}:
+            shutil.copy2(source, folder / source.name)
+    model = RealSpaceForceConstants.load(folder / 'hiphive_model.npz')
+    reps = np.asarray(cfg['specimen_repetitions'], dtype=int)
+    finite = finite_periodic_modes(model, reps)
+    np.savez_compressed(folder / 'bath.npz', **finite, cell_m=reps[:, None] * model.cell_m)
+    record = dict(old_record, config_digest=fingerprint(cfg),
+                  mode_quanta_mev=finite['omega_rad_s'] * constants.hbar / (constants.e * 1e-3),
+                  active_mode_count=len(finite['omega_rad_s']), specimen_atoms=len(finite['positions_m']),
+                  specimen_repetitions=reps.tolist(),
+                  boundary='x'.join(map(str, reps)) + ' periodic nuclear cell; vacuum-padded z electron potential',
+                  reused_force_constants_from=str(previous),
+                  source_preparation_sha256=sha256(previous / 'phonons/preparation.json'))
+    if len(finite['omega_rad_s']) != 3 * len(finite['positions_m']) - 3:
+        raise ValueError('finite bath does not contain all internal modes')
+    json_write(folder / 'preparation.json', record)
+    json_write(folder / 'contract.json', dict(phonon_contract=preparation_contract(cfg),
+        files={p.name: sha256(p) for p in folder.iterdir() if p.is_file()}))
+    log(f'Reused validated force fit; built {len(finite["omega_rad_s"])} internal modes for {reps.tolist()}')
+
+
 def prepare(out, cfg):
     """Fit harmonic SNAP forces in hiPhive, retaining independent validation."""
     from ase.io import read, write
@@ -75,6 +114,9 @@ def prepare(out, cfg):
     if (folder / 'preparation.json').exists():
         validate_preparation(out, cfg)
         log('Using completed phonon preparation')
+        return
+    if cfg.get('reuse_force_constants_from'):
+        reuse_force_constants(out, cfg, cfg['reuse_force_constants_from'])
         return
     unit = read(out / 'inputs/Si_110_temp300.lmp', format='lammps-data', atom_style='atomic')
     unit.set_masses(np.full(len(unit), cfg['mass_u']))
@@ -120,8 +162,10 @@ def prepare(out, cfg):
     fc = fcp.get_force_constants(reference).get_fc_array(2)
     model, range_record = real_space_from_supercell(unit, reps, fc)
     model.save(folder / 'hiphive_model.npz')
-    finite = finite_periodic_modes(model, (1, 1, 1))
-    np.savez_compressed(folder / 'bath.npz', **finite, cell_m=np.asarray(unit.cell) * 1e-10)
+    finite_unit = finite_periodic_modes(model, (1, 1, 1))
+    specimen_reps = np.asarray(cfg['specimen_repetitions'], dtype=int)
+    finite = finite_periodic_modes(model, specimen_reps)
+    np.savez_compressed(folder / 'bath.npz', **finite, cell_m=specimen_reps[:, None] * np.asarray(unit.cell) * 1e-10)
     u = np.array(displacements[cfg['training_pairs']:])
     prediction = -np.einsum('ijab,sjb->sia', fc, u)
     actual = np.array(exact[cfg['training_pairs']:])
@@ -145,7 +189,8 @@ def prepare(out, cfg):
         fd_energies.append(omega * constants.hbar / (constants.e * 1e-3))
         np.savez(folder / f'finite_difference_{delta:.4f}.npz', raw_ev_a2=raw, corrected_ev_a2=corrected)
     quanta = finite['omega_rad_s'] * constants.hbar / (constants.e * 1e-3)
-    fit_energy_error = float(np.max(abs(quanta - fd_energies[-1])))
+    unit_quanta = finite_unit['omega_rad_s'] * constants.hbar / (constants.e * 1e-3)
+    fit_energy_error = float(np.max(abs(unit_quanta - fd_energies[-1])))
     fd_change = float(np.max(abs(fd_energies[-1] - fd_energies[0])))
     np.savez_compressed(folder / 'training_validation.npz', displacements_angstrom=displacements,
                         forces_plus_ev_per_angstrom=exact, odd_forces_ev_per_angstrom=odd)
@@ -157,20 +202,44 @@ def prepare(out, cfg):
                   finite_difference_refinement_max_mev=fd_change, range=range_record,
                   equilibrium=equilibrium, rigid_translation_modes_removed=3, active_mode_count=len(quanta),
                   approximation='Static zero-pressure volume; no thermal or zero-point expansion',
-                  boundary='1x1x1 periodic nuclear cell; vacuum-padded z electron potential')
+                  specimen_atoms=len(finite['positions_m']), specimen_repetitions=specimen_reps.tolist(),
+                  boundary='x'.join(map(str, specimen_reps)) + ' periodic nuclear cell; vacuum-padded z electron potential')
     record['passed'] = bool(heldout < 0.01 and odd_error < 0.001 and fit_energy_error < 0.05 and fd_change < 0.05
                             and np.max(abs(equilibrium['forces_ev_per_angstrom'])) < 1e-6
                             and np.max(abs(equilibrium['pressure_bar_voigt'])) < 0.1
-                            and len(quanta) == 9)
+                            and len(quanta) == 3 * len(finite['positions_m']) - 3)
     json_write(folder / 'preparation.json', record)
     if not record['passed']:
         raise ValueError('SNAP/hiPhive independent validation failed; inspect preparation.json')
     json_write(folder / 'contract.json', dict(phonon_contract=preparation_contract(cfg),
         files={p.name: sha256(p) for p in folder.iterdir() if p.is_file()}))
-    log(f'Phonons validated: 9 internal modes; fit frequency error {fit_energy_error:.6g} meV')
+    log(f'Phonons validated: {len(quanta)} internal modes; fit frequency error {fit_energy_error:.6g} meV')
 
 
 _FIELD_CONTEXT = None
+
+
+def single_occupation_phase_blocks(basis, xi, dimension):
+    """Exact p=1 product of the same working-Fock single-mode blocks.
+
+    Factor out the vacuum product instead of multiplying a full CxC matrix
+    for every mode. Tiny denominators fall back to the generic exact product.
+    """
+    if np.any(np.sum(basis, axis=1) > 1) or np.any(basis[0]):
+        return phase_blocks(basis, xi, dimension)
+    nodes, vectors = eigh_tridiagonal(np.zeros(dimension), np.sqrt(np.arange(1, dimension)))
+    phase = np.exp(-1j * np.asarray(xi)[:, :, None] * nodes)
+    f00 = phase @ (vectors[0] ** 2)
+    if np.any(abs(f00) < 1e-10):
+        return phase_blocks(basis, xi, dimension)
+    f01 = phase @ (vectors[0] * vectors[1])
+    f11 = phase @ (vectors[1] ** 2)
+    occupied = np.argmax(basis[1:], axis=1)
+    ratio = np.column_stack((np.ones(len(xi)), (f01 / f00)[:, occupied]))
+    result = np.prod(f00, axis=1)[:, None, None] * ratio[:, :, None] * ratio[:, None, :]
+    diagonal = np.arange(1, len(basis))
+    result[:, diagonal, diagonal] = np.prod(f00, axis=1)[:, None] * (f11 / f00)[:, occupied]
+    return result
 
 
 def initialize_field_worker(context):
@@ -206,7 +275,8 @@ def build_field_tile(task):
     folded = np.zeros((len(selected), steps, len(basis), len(basis)), complex)
     for atom, pos in enumerate(bath['positions_m']):
         xi = wavevectors @ bath['displacements_m'][atom]
-        blocks = phase_blocks(basis, xi.reshape(-1, xi.shape[-1]), cfg['working_dimension'])
+        phase_function = single_occupation_phase_blocks if cfg['p'] == 1 else phase_blocks
+        blocks = phase_function(basis, xi.reshape(-1, xi.shape[-1]), cfg['working_dimension'])
         blocks = blocks.reshape(len(selected), fields, len(basis), len(basis))
         coefficient = kernel * np.exp(-1j*(Q @ pos[:2])[:, None] - 1j*kz*(pos[2] + cfg['padding_m'] - dz/2))
         blocks *= coefficient[:, :, None, None]
@@ -237,18 +307,25 @@ class FullDisplacementAction:
     independent propagation midpoints. M=2N-1 prevents transverse cyclic alias.
     Only one dense local CxC channel matrix field is resident during propagation.
     """
-    def __init__(self, bath, cfg, folder, tile=4):
+    def __init__(self, bath, cfg, folder, tile=4, validated_field=None):
         self.bath, self.cfg = bath, cfg
         self.n, self.steps = cfg['n'], cfg['steps']
         fields, dimension = cfg['field_points'], cfg['working_dimension']
         self.basis = channel_basis(len(bath['omega_rad_s']), cfg['p'])
         self.c = len(self.basis)
-        if any(cfg[key] < 1 or cfg[key] % 2 != 1 for key in ('n', 'steps', 'field_points')):
-            raise ValueError('positive odd electron, propagation, and field grids required')
+        if cfg['n'] < 1 or any(cfg[key] < 1 or cfg[key] % 2 != 1 for key in ('steps', 'field_points')):
+            raise ValueError('positive electron grid and positive odd propagation/field grids required')
         if cfg['working_dimension'] <= cfg['p']:
             raise ValueError('working oscillator dimension must exceed the occupation cutoff')
         self.shape = (self.c, self.n, self.n)
         self.pad = 2 * self.n - 1
+        self.threads = cfg.get('hamiltonian_threads', 1)
+        self.fft_threads = cfg.get('fft_threads', self.threads)
+        if not isinstance(self.threads, int) or self.threads < 1:
+            raise ValueError('hamiltonian_threads must be a positive integer')
+        if not isinstance(self.fft_threads, int) or self.fft_threads < 1:
+            raise ValueError('fft_threads must be a positive integer')
+        self.thread_pool = ThreadPoolExecutor(max_workers=self.threads) if self.threads > 1 else None
         workers = cfg.get('field_workers', 1)
         if not isinstance(workers, int) or workers < 1:
             raise ValueError('field_workers must be a positive integer')
@@ -263,7 +340,7 @@ class FullDisplacementAction:
         energy = cfg['electron_energy_ev'] * constants.e
         self.hv = constants.hbar * electron_speed(energy)
         self.channel_j = self.basis @ (constants.hbar * bath['omega_rad_s'])
-        beams = np.arange(-(self.n // 2), self.n // 2 + 1)
+        beams = np.arange(self.n) - self.n // 2
         self.ix = beams % self.pad
         qx, qy = np.meshgrid(2 * np.pi * beams / cell[0, 0], 2 * np.pi * beams / cell[1, 1])
         self.qxy = np.stack((qx, qy), axis=-1)
@@ -286,7 +363,11 @@ class FullDisplacementAction:
         path = folder / 'channel_fields.npy'
         if manifest.exists():
             saved = json.loads(manifest.read_text())
-            if saved['digest'] != contract_digest or saved['sha256'] != sha256(path):
+            stat = path.stat()
+            signature = dict(device=stat.st_dev, inode=stat.st_ino, size=stat.st_size, mtime_ns=stat.st_mtime_ns)
+            parent_validated = validated_field is not None and validated_field == dict(
+                digest=contract_digest, sha256=saved['sha256'], stat=signature)
+            if saved['digest'] != contract_digest or (not parent_validated and saved['sha256'] != sha256(path)):
                 raise ValueError('field cache configuration/source/content mismatch')
         else:
             if path.exists():
@@ -335,6 +416,9 @@ class FullDisplacementAction:
                                      channel_count=self.c, full_cartesian_displacements=True,
                                      workers=workers, chunks=records, estimated_peak_rss_bytes=estimated_rss))
         self.fields = np.load(path, mmap_mode='r')
+        stat = path.stat()
+        self.field_identity = dict(digest=contract_digest, sha256=json.loads(manifest.read_text())['sha256'],
+            stat=dict(device=stat.st_dev, inode=stat.st_ino, size=stat.st_size, mtime_ns=stat.st_mtime_ns))
         self.cached_index, self.potential = None, None
 
     def set_slice(self, index):
@@ -343,7 +427,7 @@ class FullDisplacementAction:
         self.potential = None
         fourier = np.array(self.fields[index])
         self.trace_potential = np.trace(fourier[0]).real * self.n**2
-        local = np.fft.ifft2(fourier.reshape(self.pad, self.pad, self.c, self.c), axes=(0, 1)) * self.pad**2
+        local = threaded_fft.ifft2(fourier.reshape(self.pad, self.pad, self.c, self.c), axes=(0, 1), workers=self.fft_threads) * self.pad**2
         del fourier
         import mmap
         self.fields._mmap.madvise(mmap.MADV_DONTNEED)
@@ -365,9 +449,17 @@ class FullDisplacementAction:
         result = (self.channel_j[:, None, None] + self.kinetic_j) * wave
         embedded = np.zeros((self.c, self.pad, self.pad), complex)
         embedded[:, self.ix[:, None], self.ix[None, :]] = wave
-        position = np.fft.ifft2(embedded, axes=(-2, -1), norm='ortho').reshape(self.c, -1)
-        product = np.einsum('qij,jq->iq', self.potential, position, optimize=True)
-        reciprocal = np.fft.fft2(product.reshape(embedded.shape), axes=(-2, -1), norm='ortho')
+        position = threaded_fft.ifft2(embedded, axes=(-2, -1), norm='ortho', workers=self.fft_threads).reshape(self.c, -1)
+        if self.thread_pool is None:
+            product = np.einsum('qij,jq->iq', self.potential, position, optimize=True)
+        else:
+            product = np.empty_like(position)
+            def contract_block(bounds):
+                lo, hi = bounds
+                product[:, lo:hi] = np.einsum('qij,jq->iq', self.potential[lo:hi], position[:, lo:hi], optimize=True)
+            edges = np.linspace(0, self.pad**2, self.threads + 1, dtype=int)
+            list(self.thread_pool.map(contract_block, zip(edges[:-1], edges[1:])))
+        reciprocal = threaded_fft.fft2(product.reshape(embedded.shape), axes=(-2, -1), norm='ortho', workers=self.fft_threads)
         return result + reciprocal[:, self.ix[:, None], self.ix[None, :]]
 
     def exponential_action(self, wave, index):
@@ -418,9 +510,12 @@ def prune_completed_checkpoints(folder, initial_indices, probability_file):
 
 
 def run(out, cfg):
+    from parallel_propagation import propagate_initial_states
+    started = time.monotonic()
     with np.load(out / 'phonons/bath.npz') as data:
         bath = {k: data[k] for k in ('positions_m', 'cell_m', 'displacements_m', 'omega_rad_s')}
     h = FullDisplacementAction(bath, cfg, out / 'fields')
+    log(f'Interaction fields ready after {time.monotonic() - started:.3f} seconds')
     weights = thermal_channel_weights(h.basis, constants.hbar * bath['omega_rad_s'], cfg['temperature_k'])
     # Retain each appreciably populated initial state. Bound omitted mass using
     # log products, avoiding cancellation of tiny Bose populations at 10 K.
@@ -432,45 +527,23 @@ def run(out, cfg):
     omitted = max(0., float(nonvacuum_mass - executed_nonvacuum))
     if omitted > cfg['maximum_omitted_thermal_probability']:
         raise ValueError(f'thermal omitted-mass bound {omitted} exceeds configured tolerance')
-    log(f'Propagating {len(initial_indices)} thermal initial states; omitted probability bound {omitted:.3g}')
+    state_workers = min(cfg.get('propagation_workers', 1), len(initial_indices))
+    per_state_bytes = 5 * h.pad**2 * h.c**2 * 16 + 64 * h.c * h.pad**2 * 16 + 512 * 1024**2
+    propagation_bytes = state_workers * per_state_bytes + h.fields.nbytes + 2 * 1024**3
+    if propagation_bytes > cfg.get('maximum_rss_bytes', 64 * 1024**3):
+        raise MemoryError('aggregate parallel-propagation memory estimate exceeds configured node budget')
+    cpus = cfg.get('resource_request', {}).get('cpus')
+    if cpus and (state_workers * cfg.get('hamiltonian_threads', 1) > cpus or cfg.get('field_workers', 1) > cpus):
+        raise ValueError('declared process/thread plan exceeds allocated CPU count')
+    log(f'Propagating {len(initial_indices)} thermal initial states with {state_workers} processes, '
+        f'{cfg.get("hamiltonian_threads", 1)} contraction threads each; omitted probability bound {omitted:.3g}')
     checkpoint = out / 'checkpoints'
     checkpoint.mkdir(exist_ok=True)
-    waves, norm_drifts = [], []
-    for initial_index in initial_indices:
-        wave = np.zeros(h.shape, complex)
-        wave[initial_index, h.n//2, h.n//2] = 1
-        completed, drift = 0, 0.
-        state_path = checkpoint / f'initial_{initial_index}.json'
-        contract = fingerprint(dict(config=calculation_settings(cfg), source=sha256(Path(__file__)),
-                                    bath=sha256(out / 'phonons/bath.npz'), initial=int(initial_index)))
-        if state_path.exists():
-            state = json.loads(state_path.read_text())
-            if state['contract'] != contract or sha256(checkpoint / state['wave_file']) != state['wave_sha256']:
-                raise ValueError('checkpoint configuration/source/wave mismatch')
-            wave = np.load(checkpoint / state['wave_file'])
-            completed, drift = state['completed_slices'], state['max_norm_drift']
-        for s in range(completed, h.steps):
-            wave = h.exponential_action(wave, s)
-            norm = float(np.sum(abs(wave)**2))
-            if not np.isfinite(norm):
-                raise ValueError('non-finite propagated probability')
-            drift = max(drift, abs(norm - 1))
-            if drift > 1e-9:
-                raise ValueError(f'probability norm drift {drift} exceeds 1e-9')
-            filename = f'initial_{initial_index}_slice_{s+1}.npy'
-            temporary = checkpoint / (filename + '.tmp')
-            with temporary.open('wb') as stream:
-                np.save(stream, wave)
-            temporary.replace(checkpoint / filename)
-            previous = state['wave_file'] if state_path.exists() else None
-            state = dict(contract=contract, completed_slices=s+1, total_slices=h.steps,
-                         wave_file=filename, wave_sha256=sha256(checkpoint / filename), max_norm_drift=drift)
-            json_write(state_path, state)
-            if previous and previous != filename:
-                (checkpoint / previous).unlink()
-            log(f'Initial {initial_index}: slice {s+1}/{h.steps}; norm drift {drift:.3g}')
-        waves.append(wave)
-        norm_drifts.append(drift)
+    helper_source = Path(__file__).with_name('parallel_propagation.py')
+    contract_context = dict(config=calculation_settings(cfg), source=sha256(Path(__file__)),
+                            propagation_source=sha256(helper_source), bath=sha256(out / 'phonons/bath.npz'))
+    waves, norm_drifts = propagate_initial_states(FullDisplacementAction, bath, cfg, out / 'fields',
+        checkpoint, initial_indices, h.field_identity, contract_context)
     angle, masks = angular_detector_masks(h.qxy, electron_wavenumber(cfg['electron_energy_ev'] * constants.e), ((0, 30),))
     lines = transition_lines(np.array(waves), initial_indices, h.basis, constants.hbar * bath['omega_rad_s'], weights[initial_indices], masks)
     axis = np.linspace(-180, 180, 7201)
@@ -491,8 +564,10 @@ def run(out, cfg):
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.plot(axis, spectra['inclusive_per_mev'][0], label='Inclusive')
     ax.plot(axis, spectra['changed_per_mev'][0], label='Changed phonon state')
+    specimen = '×'.join(map(str, cfg['specimen_repetitions']))
     ax.set(xlabel='Electron energy loss (meV)', ylabel='Absolute probability / meV',
-           title='Si [110] 1×1×1 · 10 K · all 9 internal modes · p=2 · 0–30 mrad', xlim=(-180, 180))
+           title=f'Si [110] {specimen} · {cfg["temperature_k"]:g} K · all {len(bath["omega_rad_s"])} internal modes · p={cfg["p"]} · 0–30 mrad',
+           xlim=(-180, 180))
     ax.set_yscale('symlog', linthresh=1e-12)
     ax.legend()
     fig.tight_layout()
@@ -506,6 +581,7 @@ def run(out, cfg):
                child_peak_rss_kib=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
                exit_output_file=probability_file.name, exit_output_representation='unweighted |A|^2, float64',
                source_sha256=sha256(Path(__file__)), configuration_digest=fingerprint(cfg),
+               propagation_source_sha256=sha256(helper_source), elapsed_seconds=time.monotonic()-started,
                validation_scope='Requested finite discretization only; no independent convergence certificate'))
     prune_completed_checkpoints(checkpoint, initial_indices, probability_file)
     log('COMPLETE: spectra, momentum probabilities, and PNG saved; temporary complex checkpoints removed')
